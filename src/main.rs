@@ -122,6 +122,7 @@ pub struct HandshakeRequest {
 pub struct HandshakeResponse {
     pub accepted: bool,
     pub node_id: Option<PeerId>,
+    pub hostname: Option<String>,
     pub session_id: Option<String>,
     pub known_peers: Option<Vec<PeerInfo>>,
 }
@@ -386,6 +387,8 @@ async fn add_peer_handler(
                 if handshake.accepted {
                     peer.connected = true;
                     peer.session_id = handshake.session_id;
+                    // Store the hostname from the handshake response
+                    peer.hostname = handshake.hostname;
 
                     // Store the session
                     if let Some(session_id) = &peer.session_id {
@@ -460,6 +463,13 @@ async fn handshake_handler(
             }
         }
         if let Some(id) = existing_id {
+            // Update existing peer with new hostname and connection info
+            if let Some(existing_peer) = peers.get_mut(&id) {
+                existing_peer.hostname = Some(payload.hostname.clone());
+                existing_peer.connected = true;
+                existing_peer.session_id = Some(session_id.clone());
+                existing_peer.last_seen = Utc::now();
+            }
             peer.id = id.clone();
             peers.insert(id, peer);
         } else {
@@ -482,6 +492,7 @@ async fn handshake_handler(
     Json(HandshakeResponse {
         accepted: true,
         node_id: Some(node_id),
+        hostname: Some(state.node_state.read().await.hostname.clone()),
         session_id: Some(session_id),
         known_peers: Some(known_peers),
     })
@@ -586,6 +597,10 @@ async fn main() {
                                     if peer.address == addr && peer.port == port {
                                         peer.connected = true;
                                         peer.session_id = handshake.session_id.clone();
+                                        // Update hostname from handshake response
+                                        if let Some(hostname) = handshake.hostname {
+                                            peer.hostname = Some(hostname);
+                                        }
                                         break;
                                     }
                                 }
