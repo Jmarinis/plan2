@@ -85,8 +85,8 @@ pub struct NodeState {
 
 impl NodeState {
     pub fn new(address: String, port: u16, hostname: String) -> Self {
-        // Get all local IP addresses
-        let all_addresses: Vec<String> = if_addrs::get_if_addrs()
+        // Get all local IP addresses for display
+        let service_addresses: Vec<String> = if_addrs::get_if_addrs()
             .unwrap_or_default()
             .iter()
             .filter(|iface| {
@@ -95,18 +95,10 @@ impl NodeState {
             })
             .map(|iface| iface.ip().to_string())
             .collect();
-
-        // Determine the address to advertise to peers
-        // If bind address is 0.0.0.0, use the first available non-loopback IP
-        let service_addresses = all_addresses.clone();
         
         Self {
             id: Uuid::new_v4().to_string(),
-            address: if address == "0.0.0.0" {
-                all_addresses.first().cloned().unwrap_or_else(|| "127.0.0.1".to_string())
-            } else {
-                address
-            },
+            address,
             port,
             hostname,
             service_addresses,
@@ -362,15 +354,29 @@ async fn add_peer_handler(
     }
 
     let mut peer = Peer::new(payload.address.clone(), payload.port);
-    
+
+    // Determine our advertised address - use first service address if bound to 0.0.0.0
+    let node_state = state.node_state.read().await;
+    let our_address = if node_state.address == "0.0.0.0" {
+        node_state.service_addresses.first()
+            .cloned()
+            .unwrap_or_else(|| "127.0.0.1".to_string())
+    } else {
+        node_state.address.clone()
+    };
+    let our_port = node_state.port;
+    let our_hostname = node_state.hostname.clone();
+    let our_node_id = node_state.id.clone();
+    drop(node_state);
+
     // Try to establish connection
     match state.http_client
         .post(format!("http://{}:{}/api/handshake", peer.address, peer.port))
         .json(&HandshakeRequest {
-            node_id: state.node_state.read().await.id.clone(),
-            address: state.node_state.read().await.address.clone(),
-            port: state.node_state.read().await.port,
-            hostname: state.node_state.read().await.hostname.clone(),
+            node_id: our_node_id,
+            address: our_address,
+            port: our_port,
+            hostname: our_hostname,
         })
         .send()
         .await
@@ -547,13 +553,27 @@ async fn main() {
             };
             
             for (addr, port) in peers_to_try {
+                // Determine our advertised address
+                let node_state = discovery_state.node_state.read().await;
+                let our_address = if node_state.address == "0.0.0.0" {
+                    node_state.service_addresses.first()
+                        .cloned()
+                        .unwrap_or_else(|| "127.0.0.1".to_string())
+                } else {
+                    node_state.address.clone()
+                };
+                let our_port = node_state.port;
+                let our_hostname = node_state.hostname.clone();
+                let our_node_id = node_state.id.clone();
+                drop(node_state);
+
                 match discovery_state.http_client
                     .post(format!("http://{}:{}/api/handshake", addr, port))
                     .json(&HandshakeRequest {
-                        node_id: discovery_state.node_state.read().await.id.clone(),
-                        address: discovery_state.node_state.read().await.address.clone(),
-                        port: discovery_state.node_state.read().await.port,
-                        hostname: discovery_state.node_state.read().await.hostname.clone(),
+                        node_id: our_node_id,
+                        address: our_address,
+                        port: our_port,
+                        hostname: our_hostname,
                     })
                     .send()
                     .await
