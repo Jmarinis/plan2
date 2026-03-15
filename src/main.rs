@@ -520,9 +520,12 @@ async fn main() {
         .unwrap_or_else(|_| "3000".to_string())
         .parse()
         .unwrap_or(3000);
+    // Get hostname from env or system
     let hostname = std::env::var("P2P_HOSTNAME")
         .unwrap_or_else(|_| {
-            std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".to_string())
+            hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string())
         });
 
     info!("Starting P2P node on {}:{} (hostname: {})", address, port, hostname);
