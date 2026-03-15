@@ -8,6 +8,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -20,6 +21,13 @@ use uuid::Uuid;
 
 /// Unique identifier for each peer node
 type PeerId = String;
+
+/// Generate a deterministic peer ID based on address and port
+fn generate_peer_id(address: &str, port: u16) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("{}:{}", address, port).as_bytes());
+    hex::encode(hasher.finalize())
+}
 
 /// Represents a known peer in the network
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +44,7 @@ pub struct Peer {
 impl Peer {
     pub fn new(address: String, port: u16) -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
+            id: generate_peer_id(&address, port),
             address,
             port,
             hostname: None,
@@ -410,7 +418,8 @@ async fn add_peer_handler(
                         let mut peers = state.peers.write().await;
                         for kp in known_peers {
                             if kp.address != payload.address || kp.port != payload.port {
-                                peers.entry(Uuid::new_v4().to_string()).or_insert_with(|| {
+                                let peer_id = generate_peer_id(&kp.address, kp.port);
+                                peers.entry(peer_id).or_insert_with(|| {
                                     let mut p = Peer::new(kp.address.clone(), kp.port);
                                     p.hostname = kp.hostname;
                                     p.last_seen = Utc::now();

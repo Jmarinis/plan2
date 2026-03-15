@@ -32,3 +32,7 @@ if-addrs = "0.13"
 
 # Hostname detection
 hostname = "0.4"
+
+# Hashing for deterministic peer IDs
+sha2 = "0.10"
+hex = "0.4"
