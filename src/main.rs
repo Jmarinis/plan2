@@ -78,17 +78,30 @@ pub struct NodeState {
     pub address: String,
     pub port: u16,
     pub hostname: String,
+    pub service_addresses: Vec<String>,
     pub started_at: DateTime<Utc>,
     pub uptime_seconds: u64,
 }
 
 impl NodeState {
     pub fn new(address: String, port: u16, hostname: String) -> Self {
+        // Get all local IP addresses
+        let service_addresses = if_addrs::get_if_addrs()
+            .unwrap_or_default()
+            .iter()
+            .filter(|iface| {
+                // Skip loopback and link-local addresses
+                !iface.ip().is_loopback() && !iface.ip().is_multicast()
+            })
+            .map(|iface| iface.ip().to_string())
+            .collect();
+
         Self {
             id: Uuid::new_v4().to_string(),
             address,
             port,
             hostname,
+            service_addresses,
             started_at: Utc::now(),
             uptime_seconds: 0,
         }
@@ -211,9 +224,12 @@ async fn index_handler() -> Html<&'static str> {
             <div class="grid" id="node-stats">
                 <div class="stat"><div class="stat-label">Node ID</div><div class="stat-value" id="node-id">-</div></div>
                 <div class="stat"><div class="stat-label">Hostname</div><div class="stat-value" id="node-hostname">-</div></div>
-                <div class="stat"><div class="stat-label">Address</div><div class="stat-value" id="node-address">-</div></div>
                 <div class="stat"><div class="stat-label">Port</div><div class="stat-value" id="node-port">-</div></div>
                 <div class="stat"><div class="stat-label">Uptime</div><div class="stat-value" id="node-uptime">-</div></div>
+            </div>
+            <div style="margin-top: 15px;">
+                <div class="stat-label">Service Addresses</div>
+                <div id="service-addresses" style="color: #00d9ff; margin-top: 5px; font-family: monospace;"></div>
             </div>
         </div>
 
@@ -249,9 +265,14 @@ async fn index_handler() -> Html<&'static str> {
 
             document.getElementById('node-id').textContent = data.node.id.slice(0, 8) + '...';
             document.getElementById('node-hostname').textContent = data.node.hostname;
-            document.getElementById('node-address').textContent = data.node.address;
             document.getElementById('node-port').textContent = data.node.port;
             document.getElementById('node-uptime').textContent = data.node.uptime_seconds + 's';
+            
+            // Display service addresses
+            const addresses = data.node.service_addresses || [];
+            document.getElementById('service-addresses').innerHTML = addresses
+                .map(addr => `<span style="display: inline-block; background: #0f3460; padding: 5px 10px; border-radius: 4px; margin: 3px;">${addr}:${data.node.port}</span>`)
+                .join('') || '<span style="color: #888;">No addresses available</span>';
 
             const connectedBody = document.querySelector('#connected-peers tbody');
             connectedBody.innerHTML = data.connected_peers.map(p =>
