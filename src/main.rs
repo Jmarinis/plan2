@@ -86,7 +86,7 @@ pub struct NodeState {
 impl NodeState {
     pub fn new(address: String, port: u16, hostname: String) -> Self {
         // Get all local IP addresses
-        let service_addresses = if_addrs::get_if_addrs()
+        let all_addresses: Vec<String> = if_addrs::get_if_addrs()
             .unwrap_or_default()
             .iter()
             .filter(|iface| {
@@ -96,9 +96,17 @@ impl NodeState {
             .map(|iface| iface.ip().to_string())
             .collect();
 
+        // Determine the address to advertise to peers
+        // If bind address is 0.0.0.0, use the first available non-loopback IP
+        let service_addresses = all_addresses.clone();
+        
         Self {
             id: Uuid::new_v4().to_string(),
-            address,
+            address: if address == "0.0.0.0" {
+                all_addresses.first().cloned().unwrap_or_else(|| "127.0.0.1".to_string())
+            } else {
+                address
+            },
             port,
             hostname,
             service_addresses,
