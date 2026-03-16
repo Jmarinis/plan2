@@ -322,18 +322,15 @@ async fn index_handler() -> Html<&'static str> {
             document.getElementById('connected-count').textContent = data.connected_peers.length;
 
             const knownBody = document.querySelector('#known-peers tbody');
-            knownBody.innerHTML = data.known_peers.map(p => {
-                const actionBtn = p.connected
-                    ? `<button onclick="disconnectPeer('${p.id}')" style="background:#ff9f43;color:#1a1a2e;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;font-weight:bold;">Disconnect</button>`
-                    : `<button onclick="connectPeer('${p.id}')" style="background:#00d9ff;color:#1a1a2e;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;font-weight:bold;">Connect</button>`;
-                return `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
+            knownBody.innerHTML = data.known_peers.map(p =>
+                `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
                 <td class="${p.connected ? 'status-connected' : 'status-disconnected'}">${p.connected ? 'Connected' : 'Disconnected'}</td>
                 <td>${new Date(p.last_seen).toLocaleTimeString()}</td>
                 <td>
-                    ${actionBtn}
+                    ${!p.connected ? `<button onclick="connectPeer('${p.id}')" style="background:#00d9ff;color:#1a1a2e;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;font-weight:bold;">Connect</button>` : ''}
                     <button onclick="removePeer('${p.id}')" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;margin-left:5px;">Remove</button>
-                </td></tr>`;
-            }).join('') || '<tr><td colspan="7">No known peers</td></tr>';
+                </td></tr>`
+            ).join('') || '<tr><td colspan="7">No known peers</td></tr>';
             document.getElementById('known-count').textContent = data.known_peers.length;
         }
 
@@ -517,7 +514,7 @@ async fn add_peer_handler(
     )
 }
 
-/// Remove a peer locally (disconnect without notifying)
+/// Remove a peer locally (disconnect if connected, then remove)
 async fn remove_peer_handler(
     State(state): State<AppState>,
     Json(payload): Json<RemovePeerRequest>,
@@ -526,6 +523,21 @@ async fn remove_peer_handler(
 
     if let Some(peer) = peers.get(&payload.peer_id) {
         let peer_clone = peer.clone();
+
+        // If connected, notify the peer and disconnect first
+        if peer_clone.connected {
+            if let Some(session_id) = &peer_clone.session_id {
+                let _ = state.http_client
+                    .post(format!("http://{}:{}/api/disconnect-session", peer_clone.address, peer_clone.port))
+                    .json(&DisconnectRequest {
+                        node_id: state.node_state.read().await.id.clone(),
+                        session_id: session_id.clone(),
+                        reason: "Peer being removed".to_string(),
+                    })
+                    .send()
+                    .await;
+            }
+        }
 
         // Remove the peer locally
         peers.remove(&payload.peer_id);
