@@ -321,17 +321,19 @@ async fn index_handler() -> Html<&'static str> {
             ).join('') || '<tr><td colspan="7">No connected peers</td></tr>';
             document.getElementById('connected-count').textContent = data.connected_peers.length;
 
+            // Known peers excludes connected peers (they're shown above)
+            const knownPeersOnly = data.known_peers.filter(p => !p.connected);
             const knownBody = document.querySelector('#known-peers tbody');
-            knownBody.innerHTML = data.known_peers.map(p =>
+            knownBody.innerHTML = knownPeersOnly.map(p =>
                 `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
-                <td class="${p.connected ? 'status-connected' : 'status-disconnected'}">${p.connected ? 'Connected' : 'Disconnected'}</td>
+                <td class="status-disconnected">Disconnected</td>
                 <td>${new Date(p.last_seen).toLocaleTimeString()}</td>
                 <td>
-                    ${!p.connected ? `<button onclick="connectPeer('${p.id}')" style="background:#00d9ff;color:#1a1a2e;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;font-weight:bold;">Connect</button>` : ''}
+                    <button onclick="connectPeer('${p.id}')" style="background:#00d9ff;color:#1a1a2e;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;font-weight:bold;">Connect</button>
                     <button onclick="removePeer('${p.id}')" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;margin-left:5px;">Remove</button>
                 </td></tr>`
             ).join('') || '<tr><td colspan="7">No known peers</td></tr>';
-            document.getElementById('known-count').textContent = data.known_peers.length;
+            document.getElementById('known-count').textContent = knownPeersOnly.length;
         }
 
         async function disconnectPeer(peerId) {
@@ -344,9 +346,6 @@ async fn index_handler() -> Html<&'static str> {
         }
 
         async function removePeer(peerId) {
-            if (!confirm('Remove this peer from the local list?')) {
-                return;
-            }
             await fetch('/api/peers/remove', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -393,7 +392,8 @@ async fn status_handler(State(state): State<AppState>) -> Json<StatusResponse> {
     let sessions = state.sessions.read().await.clone();
 
     let connected_peers: Vec<Peer> = peers.values().filter(|p| p.connected).cloned().collect();
-    let known_peers: Vec<Peer> = peers.values().cloned().collect();
+    // Known peers excludes connected peers (they're shown in connected table)
+    let known_peers: Vec<Peer> = peers.values().filter(|p| !p.connected).cloned().collect();
     let active_sessions: Vec<Session> = sessions.values().cloned().collect();
 
     Json(StatusResponse {
