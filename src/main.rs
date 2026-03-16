@@ -337,30 +337,48 @@ async fn index_handler() -> Html<&'static str> {
         }
 
         async function disconnectPeer(peerId) {
-            await fetch('/api/peers/disconnect', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({peer_id: peerId})
-            });
-            loadStatus();
+            console.log('Disconnecting peer:', peerId);
+            try {
+                const response = await fetch('/api/peers/disconnect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({peer_id: peerId})
+                });
+                console.log('Disconnect response:', response.status);
+                loadStatus();
+            } catch (error) {
+                console.error('Disconnect failed:', error);
+            }
         }
 
         async function removePeer(peerId) {
-            await fetch('/api/peers/remove', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({peer_id: peerId})
-            });
-            loadStatus();
+            console.log('Removing peer:', peerId);
+            try {
+                const response = await fetch('/api/peers/remove', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({peer_id: peerId})
+                });
+                console.log('Remove response:', response.status);
+                loadStatus();
+            } catch (error) {
+                console.error('Remove failed:', error);
+            }
         }
 
         async function connectPeer(peerId) {
-            await fetch('/api/peers/connect', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({peer_id: peerId})
-            });
-            loadStatus();
+            console.log('Connecting to peer:', peerId);
+            try {
+                const response = await fetch('/api/peers/connect', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({peer_id: peerId})
+                });
+                console.log('Connect response:', response.status);
+                loadStatus();
+            } catch (error) {
+                console.error('Connect failed:', error);
+            }
         }
 
         async function addPeer(e) {
