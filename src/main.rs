@@ -632,11 +632,24 @@ async fn connect_peer_handler(
     Json(payload): Json<RemovePeerRequest>,
 ) -> impl IntoResponse {
     let peers = state.peers.read().await;
-    
+
     if let Some(peer) = peers.get(&payload.peer_id) {
-        let peer_clone = peer.clone();
+        let peer_address = peer.address.clone();
+        let peer_port = peer.port;
+        let peer_connected = peer.connected;
         drop(peers);
-        
+
+        // Don't connect if already connected
+        if peer_connected {
+            return (
+                StatusCode::OK,
+                Json(RemovePeerResponse {
+                    success: true,
+                    message: format!("Peer {} is already connected", payload.peer_id),
+                }),
+            );
+        }
+
         // Try to establish connection
         let node_state = state.node_state.read().await;
         let our_address = if node_state.address == "0.0.0.0" {
@@ -650,9 +663,11 @@ async fn connect_peer_handler(
         let our_hostname = node_state.hostname.clone();
         let our_node_id = node_state.id.clone();
         drop(node_state);
-        
+
+        info!("Attempting to connect to peer {}:{}...", peer_address, peer_port);
+
         match state.http_client
-            .post(format!("http://{}:{}/api/handshake", peer_clone.address, peer_clone.port))
+            .post(format!("http://{}:{}/api/handshake", peer_address, peer_port))
             .json(&HandshakeRequest {
                 node_id: our_node_id,
                 address: our_address,
@@ -663,44 +678,51 @@ async fn connect_peer_handler(
             .await
         {
             Ok(resp) => {
-                if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
-                    if handshake.accepted {
-                        let mut peers = state.peers.write().await;
-                        if let Some(p) = peers.get_mut(&payload.peer_id) {
-                            p.connected = true;
-                            p.session_id = handshake.session_id.clone();
-                            p.hostname = handshake.hostname;
-                            if let Some(addr) = handshake.address {
-                                p.address = addr;
+                match resp.json::<HandshakeResponse>().await {
+                    Ok(handshake) => {
+                        if handshake.accepted {
+                            let mut peers = state.peers.write().await;
+                            if let Some(p) = peers.get_mut(&payload.peer_id) {
+                                p.connected = true;
+                                p.session_id = handshake.session_id.clone();
+                                p.hostname = handshake.hostname;
+                                if let Some(addr) = handshake.address {
+                                    p.address = addr;
+                                }
+                                if let Some(port) = handshake.port {
+                                    p.port = port;
+                                }
+                                p.last_seen = Utc::now();
                             }
-                            if let Some(port) = handshake.port {
-                                p.port = port;
+
+                            if let Some(session_id) = handshake.session_id {
+                                let mut sessions = state.sessions.write().await;
+                                sessions.insert(session_id, Session::new(String::new()));
                             }
-                            p.last_seen = Utc::now();
+
+                            info!("Connected to peer {}:{}", peer_address, peer_port);
+
+                            return (
+                                StatusCode::OK,
+                                Json(RemovePeerResponse {
+                                    success: true,
+                                    message: format!("Connected to peer {}", payload.peer_id),
+                                }),
+                            );
+                        } else {
+                            warn!("Peer {}:{} rejected handshake", peer_address, peer_port);
                         }
-                        
-                        if let Some(session_id) = handshake.session_id {
-                            let mut sessions = state.sessions.write().await;
-                            sessions.insert(session_id, Session::new(String::new()));
-                        }
-                        
-                        info!("Connected to peer {}:{}", peer_clone.address, peer_clone.port);
-                        
-                        return (
-                            StatusCode::OK,
-                            Json(RemovePeerResponse {
-                                success: true,
-                                message: format!("Connected to peer {}", payload.peer_id),
-                            }),
-                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse handshake response from {}:{} - {}", peer_address, peer_port, e);
                     }
                 }
             }
             Err(e) => {
-                warn!("Failed to connect to peer {}:{} - {}", peer_clone.address, peer_clone.port, e);
+                warn!("Failed to connect to peer {}:{} - {}", peer_address, peer_port, e);
             }
         }
-        
+
         (
             StatusCode::OK,
             Json(RemovePeerResponse {
