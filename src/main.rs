@@ -631,11 +631,20 @@ async fn handshake_handler(
     info!("Accepted handshake from {}:{} (session: {})", payload.address, payload.port, session_id);
 
     let node_state = state.node_state.read().await;
+    // Use a routable address instead of 0.0.0.0
+    let advertised_address = if node_state.address == "0.0.0.0" {
+        node_state.service_addresses.first()
+            .cloned()
+            .unwrap_or_else(|| "127.0.0.1".to_string())
+    } else {
+        node_state.address.clone()
+    };
+    
     Json(HandshakeResponse {
         accepted: true,
         node_id: Some(node_id),
         hostname: Some(node_state.hostname.clone()),
-        address: Some(node_state.address.clone()),
+        address: Some(advertised_address),
         port: Some(node_state.port),
         session_id: Some(session_id),
         known_peers: Some(known_peers),
