@@ -459,15 +459,10 @@ async fn add_peer_handler(
                 if handshake.accepted {
                     peer.connected = true;
                     peer.session_id = handshake.session_id;
-                    // Store the hostname and address from the handshake response
+                    // Store the hostname from the handshake response
                     peer.hostname = handshake.hostname;
-                    // Use the peer's advertised address if provided
-                    if let Some(addr) = handshake.address {
-                        peer.address = addr;
-                    }
-                    if let Some(port) = handshake.port {
-                        peer.port = port;
-                    }
+                    // Note: We keep the address we connected to, not the advertised address
+                    // This ensures we always have a working connection address
 
                     // Store the session
                     if let Some(session_id) = &peer.session_id {
@@ -686,12 +681,7 @@ async fn connect_peer_handler(
                                 p.connected = true;
                                 p.session_id = handshake.session_id.clone();
                                 p.hostname = handshake.hostname;
-                                if let Some(addr) = handshake.address {
-                                    p.address = addr;
-                                }
-                                if let Some(port) = handshake.port {
-                                    p.port = port;
-                                }
+                                // Keep the address we connected to, not the advertised address
                                 p.last_seen = Utc::now();
                             }
 
@@ -1024,16 +1014,11 @@ async fn main() {
                                     if peer.address == addr && peer.port == port {
                                         peer.connected = true;
                                         peer.session_id = handshake.session_id.clone();
-                                        // Update from handshake response
+                                        // Update hostname from handshake response
                                         if let Some(hostname) = handshake.hostname {
                                             peer.hostname = Some(hostname);
                                         }
-                                        if let Some(address) = handshake.address {
-                                            peer.address = address;
-                                        }
-                                        if let Some(port) = handshake.port {
-                                            peer.port = port;
-                                        }
+                                        // Keep the address we connected to
                                         break;
                                     }
                                 }
