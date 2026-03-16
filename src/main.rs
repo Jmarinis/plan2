@@ -209,7 +209,7 @@ pub struct AddPeerResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemovePeerRequest {
     pub peer_id: PeerId,
-    pub notify_peer: bool,
+    pub notify_peer: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
