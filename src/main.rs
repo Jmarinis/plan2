@@ -317,7 +317,7 @@ async fn index_handler() -> Html<&'static str> {
                 `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
                 <td class="status-connected">${p.session_id ? p.session_id.slice(0,8)+'...' : '-'}</td>
                 <td>${new Date(p.last_seen).toLocaleTimeString()}</td>
-                <td><button onclick="removePeer('${p.id}', true)" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;">Disconnect</button></td></tr>`
+                <td><button onclick="removePeer('${p.id}')" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;">Disconnect</button></td></tr>`
             ).join('') || '<tr><td colspan="7">No connected peers</td></tr>';
             document.getElementById('connected-count').textContent = data.connected_peers.length;
 
@@ -326,19 +326,19 @@ async fn index_handler() -> Html<&'static str> {
                 `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
                 <td class="${p.connected ? 'status-connected' : 'status-disconnected'}">${p.connected ? 'Connected' : 'Disconnected'}</td>
                 <td>${new Date(p.last_seen).toLocaleTimeString()}</td>
-                <td><button onclick="removePeer('${p.id}', false)" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;">Remove</button></td></tr>`
+                <td><button onclick="removePeer('${p.id}')" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;">Remove</button></td></tr>`
             ).join('') || '<tr><td colspan="7">No known peers</td></tr>';
             document.getElementById('known-count').textContent = data.known_peers.length;
         }
 
-        async function removePeer(peerId, notifyPeer) {
-            if (!confirm('Remove this peer?' + (notifyPeer ? '\n\nThe peer will also be notified to remove this node.' : ''))) {
+        async function removePeer(peerId) {
+            if (!confirm('Remove this peer?\n\nIf connected, the peer will be notified to remove this node.')) {
                 return;
             }
             await fetch('/api/peers/remove', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({peer_id: peerId, notify_peer: notifyPeer})
+                body: JSON.stringify({peer_id: peerId, notify_peer: true})
             });
             loadStatus();
         }
@@ -493,18 +493,18 @@ async fn add_peer_handler(
     )
 }
 
-/// Remove a peer and optionally notify them
+/// Remove a peer and notify them if connected
 async fn remove_peer_handler(
     State(state): State<AppState>,
     Json(payload): Json<RemovePeerRequest>,
 ) -> impl IntoResponse {
     let mut peers = state.peers.write().await;
-    
+
     if let Some(peer) = peers.get(&payload.peer_id) {
         let peer_clone = peer.clone();
-        
-        // Optionally notify the peer to remove us
-        if payload.notify_peer && peer_clone.connected {
+
+        // Always notify connected peers to remove us
+        if peer_clone.connected {
             if let Some(session_id) = &peer_clone.session_id {
                 let _ = state.http_client
                     .post(format!("http://{}:{}/api/disconnect", peer_clone.address, peer_clone.port))
@@ -517,18 +517,18 @@ async fn remove_peer_handler(
                     .await;
             }
         }
-        
+
         // Remove the peer
         peers.remove(&payload.peer_id);
-        
+
         // Remove associated session
         if let Some(session_id) = &peer_clone.session_id {
             let mut sessions = state.sessions.write().await;
             sessions.remove(session_id);
         }
-        
+
         info!("Removed peer {}:{}", peer_clone.address, peer_clone.port);
-        
+
         (
             StatusCode::OK,
             Json(RemovePeerResponse {
