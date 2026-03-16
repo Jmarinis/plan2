@@ -572,11 +572,13 @@ async fn disconnect_peer_handler(
 
     if let Some(peer) = peers.get(&payload.peer_id) {
         let peer_clone = peer.clone();
-        
+        info!("Disconnect request for peer {} (connected: {})", payload.peer_id, peer_clone.connected);
+
         // Only disconnect if currently connected
         if peer_clone.connected {
             // Notify the peer to disconnect (but not remove us from their list)
             if let Some(session_id) = &peer_clone.session_id {
+                info!("Notifying peer {}:{} to disconnect", peer_clone.address, peer_clone.port);
                 let _ = state.http_client
                     .post(format!("http://{}:{}/api/disconnect-session", peer_clone.address, peer_clone.port))
                     .json(&DisconnectRequest {
@@ -593,6 +595,7 @@ async fn disconnect_peer_handler(
         if let Some(peer) = peers.get_mut(&payload.peer_id) {
             peer.connected = false;
             peer.session_id = None;
+            info!("Peer {} marked as disconnected", payload.peer_id);
         }
 
         // Remove associated session locally
@@ -611,6 +614,7 @@ async fn disconnect_peer_handler(
             }),
         )
     } else {
+        info!("Peer {} not found for disconnect", payload.peer_id);
         (
             StatusCode::NOT_FOUND,
             Json(RemovePeerResponse {
