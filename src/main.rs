@@ -317,21 +317,33 @@ async fn index_handler() -> Html<&'static str> {
                 `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
                 <td class="status-connected">${p.session_id ? p.session_id.slice(0,8)+'...' : '-'}</td>
                 <td>${new Date(p.last_seen).toLocaleTimeString()}</td>
-                <td><button onclick="removePeer('${p.id}')" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;">Disconnect</button></td></tr>`
+                <td><button onclick="disconnectPeer('${p.id}')" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;">Disconnect</button></td></tr>`
             ).join('') || '<tr><td colspan="7">No connected peers</td></tr>';
             document.getElementById('connected-count').textContent = data.connected_peers.length;
 
             const knownBody = document.querySelector('#known-peers tbody');
             knownBody.innerHTML = data.known_peers.map(p => {
                 const actionBtn = p.connected
-                    ? `<button onclick="removePeer('${p.id}')" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;">Remove</button>`
+                    ? `<button onclick="disconnectPeer('${p.id}')" style="background:#ff9f43;color:#1a1a2e;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;font-weight:bold;">Disconnect</button>`
                     : `<button onclick="connectPeer('${p.id}')" style="background:#00d9ff;color:#1a1a2e;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;font-weight:bold;">Connect</button>`;
                 return `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
                 <td class="${p.connected ? 'status-connected' : 'status-disconnected'}">${p.connected ? 'Connected' : 'Disconnected'}</td>
                 <td>${new Date(p.last_seen).toLocaleTimeString()}</td>
-                <td>${actionBtn}</td></tr>`;
+                <td>
+                    ${actionBtn}
+                    <button onclick="removePeer('${p.id}')" style="background:#ff6b6b;color:white;padding:4px 8px;border:none;border-radius:3px;cursor:pointer;margin-left:5px;">Remove</button>
+                </td></tr>`;
             }).join('') || '<tr><td colspan="7">No known peers</td></tr>';
             document.getElementById('known-count').textContent = data.known_peers.length;
+        }
+
+        async function disconnectPeer(peerId) {
+            await fetch('/api/peers/disconnect', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({peer_id: peerId})
+            });
+            loadStatus();
         }
 
         async function removePeer(peerId) {
@@ -544,6 +556,64 @@ async fn remove_peer_handler(
     }
 }
 
+/// Disconnect from a peer (keep in known list, just break connection)
+async fn disconnect_peer_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<RemovePeerRequest>,
+) -> impl IntoResponse {
+    let mut peers = state.peers.write().await;
+
+    if let Some(peer) = peers.get(&payload.peer_id) {
+        let peer_clone = peer.clone();
+        
+        // Only disconnect if currently connected
+        if peer_clone.connected {
+            // Notify the peer to disconnect (but not remove us from their list)
+            if let Some(session_id) = &peer_clone.session_id {
+                let _ = state.http_client
+                    .post(format!("http://{}:{}/api/disconnect-session", peer_clone.address, peer_clone.port))
+                    .json(&DisconnectRequest {
+                        node_id: state.node_state.read().await.id.clone(),
+                        session_id: session_id.clone(),
+                        reason: "Peer initiated disconnect".to_string(),
+                    })
+                    .send()
+                    .await;
+            }
+        }
+
+        // Mark peer as disconnected but keep in list
+        if let Some(peer) = peers.get_mut(&payload.peer_id) {
+            peer.connected = false;
+            peer.session_id = None;
+        }
+
+        // Remove associated session locally
+        if let Some(session_id) = &peer_clone.session_id {
+            let mut sessions = state.sessions.write().await;
+            sessions.remove(session_id);
+        }
+
+        info!("Disconnected from peer {}:{}", peer_clone.address, peer_clone.port);
+
+        (
+            StatusCode::OK,
+            Json(RemovePeerResponse {
+                success: true,
+                message: format!("Disconnected from peer {}", payload.peer_id),
+            }),
+        )
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(RemovePeerResponse {
+                success: false,
+                message: "Peer not found".to_string(),
+            }),
+        )
+    }
+}
+
 /// Attempt to connect to a known peer
 async fn connect_peer_handler(
     State(state): State<AppState>,
@@ -637,7 +707,35 @@ async fn connect_peer_handler(
     }
 }
 
-/// Handle incoming disconnect requests from peers
+/// Handle incoming disconnect requests from peers (session only, keep peer)
+async fn disconnect_session_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<DisconnectRequest>,
+) -> Json<DisconnectResponse> {
+    // Mark peer as disconnected but keep in list
+    let mut peers = state.peers.write().await;
+    let mut disconnected = false;
+
+    for peer in peers.values_mut() {
+        if peer.session_id.as_ref() == Some(&payload.session_id) {
+            disconnected = true;
+            peer.connected = false;
+            peer.session_id = None;
+            info!("Peer {}:{} disconnected (session only): {}", peer.address, peer.port, payload.reason);
+            break;
+        }
+    }
+
+    // Remove the session
+    if disconnected {
+        let mut sessions = state.sessions.write().await;
+        sessions.remove(&payload.session_id);
+    }
+
+    Json(DisconnectResponse { accepted: disconnected })
+}
+
+/// Handle incoming disconnect requests from peers (full remove)
 async fn disconnect_handler(
     State(state): State<AppState>,
     Json(payload): Json<DisconnectRequest>,
@@ -645,7 +743,7 @@ async fn disconnect_handler(
     // Remove the peer that is disconnecting
     let mut peers = state.peers.write().await;
     let mut removed = false;
-    
+
     peers.retain(|_, peer| {
         if peer.session_id.as_ref() == Some(&payload.session_id) {
             removed = true;
@@ -655,7 +753,7 @@ async fn disconnect_handler(
             true
         }
     });
-    
+
     // Remove the session
     if removed {
         let mut sessions = state.sessions.write().await;
@@ -784,9 +882,11 @@ async fn main() {
         .route("/api/status", get(status_handler))
         .route("/api/peers", post(add_peer_handler))
         .route("/api/peers/remove", post(remove_peer_handler))
+        .route("/api/peers/disconnect", post(disconnect_peer_handler))
         .route("/api/peers/connect", post(connect_peer_handler))
         .route("/api/handshake", post(handshake_handler))
         .route("/api/disconnect", post(disconnect_handler))
+        .route("/api/disconnect-session", post(disconnect_session_handler))
         .with_state(state.clone());
 
     // Start periodic peer discovery and status checks
