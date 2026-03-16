@@ -1,5 +1,5 @@
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, State},
     http::StatusCode,
     response::{Html, IntoResponse, Json},
     routing::{get, post},
@@ -799,6 +799,7 @@ async fn disconnect_handler(
 
 /// Handle incoming handshake requests from peers
 async fn handshake_handler(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     State(state): State<AppState>,
     Json(payload): Json<HandshakeRequest>,
 ) -> Json<HandshakeResponse> {
@@ -809,8 +810,11 @@ async fn handshake_handler(
     let session = Session::new(payload.node_id.clone());
     state.sessions.write().await.insert(session_id.clone(), session);
 
+    // Use the actual connection address, not the advertised address
+    let connection_address = addr.ip().to_string();
+
     // Add or update peer
-    let mut peer = Peer::new(payload.address.clone(), payload.port);
+    let mut peer = Peer::new(connection_address.clone(), payload.port);
     peer.hostname = Some(payload.hostname.clone());
     peer.connected = true;
     peer.session_id = Some(session_id.clone());
@@ -1051,6 +1055,6 @@ async fn main() {
     let addr: SocketAddr = format!("{}:{}", address, port).parse().unwrap();
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     info!("Web interface available at http://{}", addr);
-    
-    axum::serve(listener, app).await.unwrap();
+
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await.unwrap();
 }
