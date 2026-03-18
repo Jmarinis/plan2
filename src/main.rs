@@ -489,17 +489,25 @@ async fn add_peer_handler(
                     }
 
                     // Add known peers from handshake
+                    // Only add peers with valid IP addresses (not hostnames) to avoid confusion
                     if let Some(known_peers) = handshake.known_peers {
                         let mut peers = state.peers.write().await;
                         for kp in known_peers {
                             if kp.address != payload.address || kp.port != payload.port {
-                                let peer_id = generate_peer_id(&kp.address, kp.port);
-                                peers.entry(peer_id).or_insert_with(|| {
-                                    let mut p = Peer::new(kp.address.clone(), kp.port);
-                                    p.hostname = kp.hostname;
-                                    p.last_seen = Utc::now();
-                                    p
-                                });
+                                // Validate that the address is an IP, not a hostname
+                                if kp.address.parse::<std::net::IpAddr>().is_ok() {
+                                    let peer_id = generate_peer_id(&kp.address, kp.port);
+                                    peers.entry(peer_id).or_insert_with(|| {
+                                        let mut p = Peer::new(kp.address.clone(), kp.port);
+                                        p.hostname = kp.hostname;
+                                        p.last_seen = Utc::now();
+                                        p
+                                    });
+                                } else {
+                                    // If address is not an IP, use it as hostname and try to resolve
+                                    // For now, skip adding this peer to avoid showing hostname in address column
+                                    warn!("Skipping known peer with non-IP address: {}", kp.address);
+                                }
                             }
                         }
                     }
@@ -857,8 +865,10 @@ async fn handshake_handler(
     }
 
     // Gather known peers to share
+    // Only share peers with valid IP addresses to avoid propagating hostnames
     let known_peers: Vec<PeerInfo> = state.peers.read().await.values()
         .filter(|p| !(p.address == payload.address && p.port == payload.port))
+        .filter(|p| p.address.parse::<std::net::IpAddr>().is_ok())
         .map(|p| PeerInfo {
             address: p.address.clone(),
             port: p.port,
