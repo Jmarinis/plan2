@@ -223,12 +223,16 @@ pub struct RemovePeerResponse {
 // ============================================================================
 
 /// Main web interface showing node status
-async fn index_handler() -> Html<&'static str> {
-    Html(
-        r#"<!DOCTYPE html>
+async fn index_handler(State(state): State<AppState>) -> Html<String> {
+    let hostname = {
+        // Acquire a read lock on the node state to get the hostname
+        let node = state.node_state.read().await;
+        node.hostname.clone()
+    };
+    let html_template = r#"<!DOCTYPE html>
 <html>
 <head>
-    <title>P2P Node Status</title>
+    <title>P2P Node Status - {{HOSTNAME}}</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
@@ -275,7 +279,7 @@ async fn index_handler() -> Html<&'static str> {
             <h2>🔗 Add Peer</h2>
             <form class="form-group" onsubmit="addPeer(event)">
                 <input type="text" id="peer-address" placeholder="Peer address (e.g., 127.0.0.1)" required>
-                <input type="number" id="peer-port" placeholder="Port" required style="max-width:100px">
+<input type="number" id="peer-port" placeholder="Port" required style="max-width:100px" value="3000">
                 <button type="submit">Connect</button>
             </form>
         </div>
@@ -399,8 +403,9 @@ async fn index_handler() -> Html<&'static str> {
         setInterval(loadStatus, 5000);
     </script>
 </body>
-</html>"#,
-    )
+</html>"#;
+    let html = html_template.replace("{{HOSTNAME}}", &hostname);
+    Html(html)
 }
 
 /// Get node status API
