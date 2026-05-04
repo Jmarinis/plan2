@@ -466,6 +466,7 @@ async fn add_peer_handler(
     drop(node_state);
 
     // Try to establish connection
+    let mut new_peer_ids = Vec::new();
     match state.http_client
         .post(format!("http://{}:{}/api/handshake", peer.address, peer.port))
         .json(&HandshakeRequest {
@@ -502,12 +503,14 @@ async fn add_peer_handler(
                                 // Validate that the address is an IP, not a hostname
                                 if kp.address.parse::<std::net::IpAddr>().is_ok() {
                                     let peer_id = generate_peer_id(&kp.address, kp.port);
-                                    peers.entry(peer_id).or_insert_with(|| {
+                                    peers.entry(peer_id.clone()).or_insert_with(|| {
                                         let mut p = Peer::new(kp.address.clone(), kp.port);
                                         p.hostname = kp.hostname;
                                         p.last_seen = Utc::now();
                                         p
                                     });
+                                    // Track this as a new peer to attempt connection
+                                    new_peer_ids.push(peer_id);
                                 } else {
                                     // If address is not an IP, use it as hostname and try to resolve
                                     // For now, skip adding this peer to avoid showing hostname in address column
@@ -529,6 +532,17 @@ async fn add_peer_handler(
     let mut peers = state.peers.write().await;
     let peer_id = peer.id.clone();
     peers.insert(peer_id.clone(), peer.clone());
+
+    // Spawn connection attempts for newly discovered peers
+for new_peer_id in new_peer_ids {
+    let state_ref = state.clone();
+    tokio::spawn(async move {
+        connect_peer_handler(axum::extract::State(state_ref.clone()), Json(RemovePeerRequest {
+            peer_id: new_peer_id.clone(),
+            notify_peer: None,
+        })).await;
+    });
+}
 
     (
         StatusCode::OK,
