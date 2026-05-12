@@ -3,6 +3,7 @@ use std::time::Duration;
 use chrono::Utc;
 use tracing::{info, warn};
 
+use crate::handlers;
 use crate::models::{
     AppState, HandshakeRequest, HandshakeResponse, Session,
 };
@@ -108,6 +109,8 @@ pub async fn start(state: AppState) {
                 Ok(resp) => {
                     if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
                         if handshake.accepted {
+                            let known_to_exchange = handshake.known_peers.clone();
+
                             let mut peers = state.peers.write().await;
                             for peer in peers.values_mut() {
                                 if peer.address == addr && peer.port == port {
@@ -124,6 +127,13 @@ pub async fn start(state: AppState) {
                                 sessions.insert(session_id, Session::new(String::new()));
                             }
                             info!("Reconnected to peer {}:{}", addr, port);
+
+                            if let Some(kp) = known_to_exchange {
+                                let state = state.clone();
+                                tokio::spawn(async move {
+                                    handlers::connect_to_unknown_peers(&state, kp, &addr, port).await;
+                                });
+                            }
                         }
                     }
                 }
