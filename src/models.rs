@@ -54,10 +54,6 @@ impl Peer {
             health_check_failures: 0,
         }
     }
-
-    pub fn url(&self) -> String {
-        format!("http://{}:{}", self.address, self.port)
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,7 +170,7 @@ impl AppState {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct StatusResponse {
     pub node: NodeState,
     pub connected_peers: Vec<Peer>,

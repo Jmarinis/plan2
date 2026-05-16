@@ -828,62 +828,59 @@ pub async fn disconnect_peer_handler(
     State(state): State<AppState>,
     Json(payload): Json<RemovePeerRequest>,
 ) -> impl IntoResponse {
-    let mut peers = state.peers.write().await;
+    let peer_id = payload.peer_id.clone();
+    let peer_opt = {
+        let peers = state.peers.read().await;
+        peers.get(&peer_id).cloned()
+    };
 
-    if let Some(peer) = peers.get(&payload.peer_id) {
-        let peer_clone = peer.clone();
+    if let Some(peer) = peer_opt {
         info!(
             "Disconnect request for peer {} (connected: {})",
-            payload.peer_id, peer_clone.connected
+            peer_id, peer.connected
         );
 
-        if peer_clone.connected {
-            if let Some(session_id) = &peer_clone.session_id {
-                info!(
-                    "Notifying peer {}:{} to disconnect",
-                    peer_clone.address, peer_clone.port
-                );
-                let _ = state
-                    .http_client
-                    .post(format!(
-                        "http://{}:{}/api/disconnect-session",
-                        peer_clone.address, peer_clone.port
-                    ))
-                    .json(&DisconnectRequest {
-                        node_id: state.node_state.read().await.id.clone(),
-                        session_id: session_id.clone(),
-                        reason: "Peer initiated disconnect".to_string(),
-                    })
-                    .send()
-                    .await;
+        if let Some(session_id) = &peer.session_id {
+            let our_id = state.node_state.read().await.id.clone();
+            let _ = state
+                .http_client
+                .post(format!(
+                    "http://{}:{}/api/disconnect-session",
+                    peer.address, peer.port
+                ))
+                .json(&DisconnectRequest {
+                    node_id: our_id,
+                    session_id: session_id.clone(),
+                    reason: "Peer initiated disconnect".to_string(),
+                })
+                .send()
+                .await;
+        }
+
+        {
+            let mut peers = state.peers.write().await;
+            if let Some(p) = peers.get_mut(&peer_id) {
+                p.connected = false;
+                p.session_id = None;
             }
         }
 
-        if let Some(peer) = peers.get_mut(&payload.peer_id) {
-            peer.connected = false;
-            peer.session_id = None;
-            info!("Peer {} marked as disconnected", payload.peer_id);
-        }
-
-        if let Some(session_id) = &peer_clone.session_id {
+        if let Some(session_id) = &peer.session_id {
             let mut sessions = state.sessions.write().await;
             sessions.remove(session_id);
         }
 
-        info!(
-            "Disconnected from peer {}:{}",
-            peer_clone.address, peer_clone.port
-        );
+        info!("Disconnected from peer {}:{}", peer.address, peer.port);
 
         (
             StatusCode::OK,
             Json(RemovePeerResponse {
                 success: true,
-                message: format!("Disconnected from peer {}", payload.peer_id),
+                message: format!("Disconnected from peer {}", peer_id),
             }),
         )
     } else {
-        info!("Peer {} not found for disconnect", payload.peer_id);
+        info!("Peer {} not found for disconnect", peer_id);
         (
             StatusCode::NOT_FOUND,
             Json(RemovePeerResponse {
@@ -1060,7 +1057,9 @@ pub async fn disconnect_session_handler(
     let mut disconnected = false;
 
     for peer in peers.values_mut() {
-        if peer.session_id.as_ref() == Some(&payload.session_id) {
+        if peer.session_id.as_ref() == Some(&payload.session_id)
+            || peer.id == payload.node_id
+        {
             disconnected = true;
             peer.connected = false;
             peer.session_id = None;
@@ -1088,7 +1087,9 @@ pub async fn disconnect_handler(
     let mut removed = false;
 
     peers.retain(|_, peer| {
-        if peer.session_id.as_ref() == Some(&payload.session_id) {
+        if peer.session_id.as_ref() == Some(&payload.session_id)
+            || peer.id == payload.node_id
+        {
             removed = true;
             info!(
                 "Peer {}:{} disconnected: {}",

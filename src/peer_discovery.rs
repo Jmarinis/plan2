@@ -5,7 +5,7 @@ use tracing::{info, warn};
 
 use crate::handlers;
 use crate::models::{
-    AppState, HandshakeRequest, HandshakeResponse, Session,
+    AppState, HandshakeRequest, HandshakeResponse, Session, StatusResponse,
 };
 
 const HEALTH_CHECK_FAILURE_THRESHOLD: u32 = 3;
@@ -38,7 +38,25 @@ pub async fn start(state: AppState) {
                 .send()
                 .await
             {
-                Ok(_) => {
+                Ok(resp) => {
+                    if let Ok(status) = resp.json::<StatusResponse>().await {
+                        if status.node.id != *peer_id {
+                            warn!(
+                                "Health check: peer at {}:{} has different node_id (expected: {}, got: {}), removing stale entry",
+                                addr, port,
+                                &peer_id[..8.min(peer_id.len())],
+                                &status.node.id[..8.min(status.node.id.len())]
+                            );
+                            let mut peers = state.peers.write().await;
+                            if let Some(stale) = peers.remove(peer_id) {
+                                if let Some(sid) = stale.session_id {
+                                    let mut sessions = state.sessions.write().await;
+                                    sessions.remove(&sid);
+                                }
+                            }
+                            continue;
+                        }
+                    }
                     let mut peers = state.peers.write().await;
                     if let Some(peer) = peers.get_mut(peer_id) {
                         peer.last_seen = Utc::now();
@@ -113,11 +131,18 @@ pub async fn start(state: AppState) {
                                 .unwrap_or_default();
                             if !remote_id.is_empty() && remote_id != peer_id {
                                 warn!(
-                                    "Reconnect: peer at {}:{} has different node_id (expected: {}, got: {}), skipping",
+                                    "Reconnect: peer at {}:{} has different node_id (expected: {}, got: {}), removing stale entry",
                                     addr, port,
                                     &peer_id[..8.min(peer_id.len())],
                                     &remote_id[..8.min(remote_id.len())]
                                 );
+                                let mut peers = state.peers.write().await;
+                                if let Some(stale) = peers.remove(&peer_id) {
+                                    if let Some(sid) = stale.session_id {
+                                        let mut sessions = state.sessions.write().await;
+                                        sessions.remove(&sid);
+                                    }
+                                }
                                 continue;
                             }
 
