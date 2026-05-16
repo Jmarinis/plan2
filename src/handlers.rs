@@ -10,8 +10,8 @@ use uuid::Uuid;
 
 use crate::models::{
     self, AddPeerRequest, AddPeerResponse, AppState, DisconnectRequest, DisconnectResponse,
-    HandshakeRequest, HandshakeResponse, Peer, RemovePeerRequest, RemovePeerResponse, Session,
-    StatusResponse,
+    HandshakeRequest, HandshakeResponse, Peer, PeerNotification, PeerNotificationResponse,
+    RemovePeerRequest, RemovePeerResponse, Session, StatusResponse,
 };
 
 pub async fn index_handler() -> Html<&'static str> {
@@ -262,19 +262,26 @@ pub async fn connect_to_unknown_peers(
                             .node_id
                             .unwrap_or_else(|| models::generate_peer_id(&kp.address, kp.port));
 
+                        let new_peer_info = models::PeerInfo {
+                            address: kp.address.clone(),
+                            port: kp.port,
+                            hostname: handshake.hostname.clone(),
+                            node_id: Some(remote_id.clone()),
+                        };
+
                         let mut peers = state.peers.write().await;
                         if let Some(existing) = peers.get_mut(&remote_id) {
                             existing.address = kp.address.clone();
                             existing.port = kp.port;
                             existing.connected = true;
-                            existing.hostname = handshake.hostname;
+                            existing.hostname = new_peer_info.hostname.clone();
                             existing.session_id = handshake.session_id.clone();
                             existing.last_seen = Utc::now();
                         } else {
                             let mut peer = Peer::new(kp.address.clone(), kp.port);
-                            peer.id = remote_id;
+                            peer.id = remote_id.clone();
                             peer.connected = true;
-                            peer.hostname = handshake.hostname;
+                            peer.hostname = new_peer_info.hostname.clone();
                             peer.session_id = handshake.session_id.clone();
 
                             if let Some(session_id) = &peer.session_id {
@@ -284,6 +291,9 @@ pub async fn connect_to_unknown_peers(
 
                             peers.insert(peer.id.clone(), peer);
                         }
+
+                        broadcast_new_peer(state, &remote_id, &new_peer_info);
+
                         info!("Connected to discovered peer {}:{}", kp.address, kp.port);
                     }
                 }
@@ -303,6 +313,84 @@ pub async fn connect_to_unknown_peers(
             }
         }
     }
+}
+
+/// Broadcast a newly connected peer to all other connected peers.
+/// Spawns a background task so the caller is not blocked.
+pub fn broadcast_new_peer(state: &AppState, new_peer_id: &str, new_peer: &models::PeerInfo) {
+    let state = state.clone();
+    let new_peer_id = new_peer_id.to_string();
+    let new_peer = new_peer.clone();
+
+    tokio::spawn(async move {
+        let node_id = state.node_state.read().await.id.clone();
+        let connected: Vec<(String, String, u16)> = {
+            let peers = state.peers.read().await;
+            peers
+                .values()
+                .filter(|p| p.connected && p.id != new_peer_id)
+                .map(|p| (p.id.clone(), p.address.clone(), p.port))
+                .collect()
+        };
+
+        if connected.is_empty() {
+            return;
+        }
+
+        let notification = PeerNotification {
+            peer: new_peer,
+            sender_id: node_id,
+        };
+
+        for (_peer_id, addr, port) in &connected {
+            let url = format!("http://{}:{}/api/peers/notify", addr, port);
+            if let Err(e) = state
+                .http_client
+                .post(&url)
+                .json(&notification)
+                .send()
+                .await
+            {
+                warn!("Failed to notify peer {}:{} about new peer: {}", addr, port, e);
+            }
+        }
+    });
+}
+
+pub async fn notify_peer_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<PeerNotification>,
+) -> Json<PeerNotificationResponse> {
+    let peer_info = &payload.peer;
+    let kp_id = peer_info
+        .node_id
+        .clone()
+        .unwrap_or_else(|| models::generate_peer_id(&peer_info.address, peer_info.port));
+    let our_id = state.node_state.read().await.id.clone();
+
+    if kp_id == our_id {
+        return Json(PeerNotificationResponse { accepted: false });
+    }
+
+    let mut peers = state.peers.write().await;
+    if let Some(existing) = peers.get_mut(&kp_id) {
+        if existing.address == peer_info.address && existing.port == peer_info.port {
+            return Json(PeerNotificationResponse { accepted: true });
+        }
+    }
+
+    peers.entry(kp_id).or_insert_with(|| {
+        let mut p = Peer::new(peer_info.address.clone(), peer_info.port);
+        p.hostname = peer_info.hostname.clone();
+        p.last_seen = Utc::now();
+        info!(
+            "Discovered peer via notification: {}:{}",
+            peer_info.address, peer_info.port
+        );
+        p
+    });
+
+    Json(PeerNotificationResponse { accepted: true })
 }
 
 pub async fn status_handler(State(state): State<AppState>) -> Json<StatusResponse> {
@@ -390,6 +478,14 @@ pub async fn add_peer_handler(
                         let mut sessions = state.sessions.write().await;
                         sessions.insert(session_id.clone(), Session::new(peer.id.clone()));
                     }
+
+                    let new_peer_info = models::PeerInfo {
+                        address: payload.address.clone(),
+                        port: payload.port,
+                        hostname: peer.hostname.clone(),
+                        node_id: Some(peer.id.clone()),
+                    };
+                    broadcast_new_peer(&state, &peer.id, &new_peer_info);
 
                     let received_known_peers = handshake.known_peers.clone();
 
@@ -648,16 +744,23 @@ pub async fn connect_peer_handler(
                                 peers.remove(&peer_id);
                             }
 
+                            let new_peer_info = models::PeerInfo {
+                                address: peer_address.clone(),
+                                port: peer_port,
+                                hostname: handshake.hostname.clone(),
+                                node_id: Some(effective_id.clone()),
+                            };
+
                             if let Some(p) = peers.get_mut(&effective_id) {
                                 p.connected = true;
                                 p.session_id = handshake.session_id.clone();
-                                p.hostname = handshake.hostname;
+                                p.hostname = new_peer_info.hostname.clone();
                                 p.last_seen = Utc::now();
                             } else {
                                 let mut p = Peer::new(peer_address.clone(), peer_port);
                                 p.id = effective_id.clone();
                                 p.connected = true;
-                                p.hostname = handshake.hostname;
+                                p.hostname = new_peer_info.hostname.clone();
                                 p.session_id = handshake.session_id.clone();
                                 peers.insert(effective_id.clone(), p);
                             }
@@ -666,6 +769,12 @@ pub async fn connect_peer_handler(
                                 let mut sessions = state.sessions.write().await;
                                 sessions.insert(session_id, Session::new(String::new()));
                             }
+
+                            broadcast_new_peer(
+                                &state,
+                                &effective_id,
+                                &new_peer_info,
+                            );
 
                             info!("Connected to peer {}:{}", peer_address, peer_port);
 
@@ -815,6 +924,14 @@ pub async fn handshake_handler(
             peers.insert(peer.id.clone(), peer);
         }
     }
+
+    let new_peer_info = models::PeerInfo {
+        address: connection_address.clone(),
+        port: payload.port,
+        hostname: Some(payload.hostname.clone()),
+        node_id: Some(remote_node_id.clone()),
+    };
+    broadcast_new_peer(&state, &remote_node_id, &new_peer_info);
 
     let known_peers: Vec<models::PeerInfo> = state
         .peers

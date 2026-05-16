@@ -191,6 +191,17 @@ pub struct AddPeerResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct PeerNotification {
+    pub peer: PeerInfo,
+    pub sender_id: PeerId,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PeerNotificationResponse {
+    pub accepted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RemovePeerRequest {
     pub peer_id: PeerId,
     pub notify_peer: Option<bool>,

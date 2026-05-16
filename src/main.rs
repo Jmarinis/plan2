@@ -45,6 +45,7 @@ async fn main() {
         .route("/api/peers/remove", post(handlers::remove_peer_handler))
         .route("/api/peers/disconnect", post(handlers::disconnect_peer_handler))
         .route("/api/peers/connect", post(handlers::connect_peer_handler))
+        .route("/api/peers/notify", post(handlers::notify_peer_handler))
         .route("/api/handshake", post(handlers::handshake_handler))
         .route("/api/disconnect", post(handlers::disconnect_handler))
         .route("/api/disconnect-session", post(handlers::disconnect_session_handler))
