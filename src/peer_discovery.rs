@@ -8,6 +8,8 @@ use crate::models::{
     AppState, HandshakeRequest, HandshakeResponse, Session,
 };
 
+const HEALTH_CHECK_FAILURE_THRESHOLD: u32 = 3;
+
 pub async fn start(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     loop {
@@ -20,22 +22,16 @@ pub async fn start(state: AppState) {
                 .num_seconds() as u64;
         }
 
-        let connected_peers: Vec<(String, u16, String)> = {
+        let connected_peers: Vec<(String, String, u16)> = {
             let peers = state.peers.read().await;
             peers
                 .values()
                 .filter(|p| p.connected)
-                .map(|p| {
-                    (
-                        p.address.clone(),
-                        p.port,
-                        p.session_id.clone().unwrap_or_default(),
-                    )
-                })
+                .map(|p| (p.id.clone(), p.address.clone(), p.port))
                 .collect()
         };
 
-        for (addr, port, session_id) in connected_peers {
+        for (peer_id, addr, port) in &connected_peers {
             match state
                 .http_client
                 .get(format!("http://{}:{}/api/status", addr, port))
@@ -44,41 +40,43 @@ pub async fn start(state: AppState) {
             {
                 Ok(_) => {
                     let mut peers = state.peers.write().await;
-                    if let Some(peer) = peers
-                        .values_mut()
-                        .find(|p| p.address == addr && p.port == port)
-                    {
+                    if let Some(peer) = peers.get_mut(peer_id) {
                         peer.last_seen = Utc::now();
+                        peer.health_check_failures = 0;
                     }
                 }
                 Err(_) => {
                     let mut peers = state.peers.write().await;
-                    if let Some(peer) = peers
-                        .values_mut()
-                        .find(|p| p.address == addr && p.port == port)
-                    {
-                        peer.connected = false;
-                        peer.session_id = None;
-                        warn!("Peer {}:{} is no longer responding", addr, port);
-                    }
-                    if !session_id.is_empty() {
-                        let mut sessions = state.sessions.write().await;
-                        sessions.remove(&session_id);
+                    if let Some(peer) = peers.get_mut(peer_id) {
+                        peer.health_check_failures += 1;
+                        if peer.health_check_failures >= HEALTH_CHECK_FAILURE_THRESHOLD {
+                            let session_id = peer.session_id.take();
+                            peer.connected = false;
+                            warn!(
+                                "Peer {}:{} (id: {}) failed {} health checks, disconnecting",
+                                addr, port, &peer_id[..8.min(peer_id.len())],
+                                peer.health_check_failures
+                            );
+                            if let Some(sid) = session_id {
+                                let mut sessions = state.sessions.write().await;
+                                sessions.remove(&sid);
+                            }
+                        }
                     }
                 }
             }
         }
 
-        let peers_to_try: Vec<(String, u16)> = {
+        let peers_to_try: Vec<(String, String, u16)> = {
             let peers = state.peers.read().await;
             peers
                 .values()
                 .filter(|p| !p.connected)
-                .map(|p| (p.address.clone(), p.port))
+                .map(|p| (p.id.clone(), p.address.clone(), p.port))
                 .collect()
         };
 
-        for (addr, port) in peers_to_try {
+        for (peer_id, addr, port) in peers_to_try {
             let node_state = state.node_state.read().await;
             let our_address = if node_state.address == "0.0.0.0" {
                 node_state
@@ -109,17 +107,29 @@ pub async fn start(state: AppState) {
                 Ok(resp) => {
                     if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
                         if handshake.accepted {
+                            let remote_id = handshake
+                                .node_id
+                                .clone()
+                                .unwrap_or_default();
+                            if !remote_id.is_empty() && remote_id != peer_id {
+                                warn!(
+                                    "Reconnect: peer at {}:{} has different node_id (expected: {}, got: {}), skipping",
+                                    addr, port,
+                                    &peer_id[..8.min(peer_id.len())],
+                                    &remote_id[..8.min(remote_id.len())]
+                                );
+                                continue;
+                            }
+
                             let known_to_exchange = handshake.known_peers.clone();
 
                             let mut peers = state.peers.write().await;
-                            for peer in peers.values_mut() {
-                                if peer.address == addr && peer.port == port {
-                                    peer.connected = true;
-                                    peer.session_id = handshake.session_id.clone();
-                                    if let Some(hostname) = handshake.hostname {
-                                        peer.hostname = Some(hostname);
-                                    }
-                                    break;
+                            if let Some(peer) = peers.get_mut(&peer_id) {
+                                peer.connected = true;
+                                peer.session_id = handshake.session_id.clone();
+                                peer.health_check_failures = 0;
+                                if let Some(hostname) = handshake.hostname {
+                                    peer.hostname = Some(hostname);
                                 }
                             }
                             if let Some(session_id) = handshake.session_id {
@@ -130,8 +140,9 @@ pub async fn start(state: AppState) {
 
                             if let Some(kp) = known_to_exchange {
                                 let state = state.clone();
+                                let addr_clone = addr.clone();
                                 tokio::spawn(async move {
-                                    handlers::connect_to_unknown_peers(&state, kp, &addr, port).await;
+                                    handlers::connect_to_unknown_peers(&state, kp, &addr_clone, port).await;
                                 });
                             }
                         }

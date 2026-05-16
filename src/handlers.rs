@@ -5,13 +5,15 @@ use axum::{
 };
 use chrono::Utc;
 use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::models::{
     self, AddPeerRequest, AddPeerResponse, AppState, DisconnectRequest, DisconnectResponse,
     HandshakeRequest, HandshakeResponse, Peer, PeerNotification, PeerNotificationResponse,
-    RemovePeerRequest, RemovePeerResponse, Session, StatusResponse,
+    RefreshRequest, RefreshResponse, RemovePeerRequest, RemovePeerResponse, Session,
+    StatusResponse,
 };
 
 pub async fn index_handler() -> Html<&'static str> {
@@ -27,6 +29,10 @@ pub async fn index_handler() -> Html<&'static str> {
         h1 { color: #00d9ff; margin-bottom: 20px; }
         h2 { color: #00d9ff; margin: 20px 0 10px; font-size: 1.2em; }
         .card { background: #16213e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+        th.sortable { cursor: pointer; user-select: none; }
+        th.sortable:hover { color: #fff; }
+        th .sort-arrow { margin-left: 4px; }
+        th .sort-order { font-size: 0.7em; vertical-align: super; margin-left: 2px; color: #888; }
         .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; }
         .stat { background: #0f3460; padding: 15px; border-radius: 6px; }
         .stat-label { color: #888; font-size: 0.85em; margin-bottom: 5px; }
@@ -45,7 +51,7 @@ pub async fn index_handler() -> Html<&'static str> {
 </head>
 <body>
     <div class="container">
-        <button class="refresh" onclick="location.reload()">↻ Refresh</button>
+        <button class="refresh" onclick="refreshAll()">↻ Refresh</button>
         <h1>🌐 P2P Node Status</h1>
         
         <div class="card">
@@ -74,7 +80,7 @@ pub async fn index_handler() -> Html<&'static str> {
         <div class="card">
             <h2>✅ Connected Peers (<span id="connected-count">0</span>)</h2>
             <table id="connected-peers">
-                <thead><tr><th>Peer ID</th><th>Hostname</th><th>Address</th><th>Port</th><th>Session</th><th>Last Seen</th><th>Actions</th></tr></thead>
+                <thead><tr><th data-key="id" class="sortable">Peer ID</th><th data-key="hostname" class="sortable">Hostname</th><th data-key="address" class="sortable">Address</th><th data-key="port" class="sortable">Port</th><th data-key="session" class="sortable">Session</th><th data-key="lastSeen" class="sortable">Last Seen</th><th>Actions</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
@@ -82,15 +88,87 @@ pub async fn index_handler() -> Html<&'static str> {
         <div class="card">
             <h2>📋 Known Peers (<span id="known-count">0</span>)</h2>
             <table id="known-peers">
-                <thead><tr><th>Peer ID</th><th>Hostname</th><th>Address</th><th>Port</th><th>Status</th><th>Last Seen</th><th>Actions</th></tr></thead>
+                <thead><tr><th data-key="id" class="sortable">Peer ID</th><th data-key="hostname" class="sortable">Hostname</th><th data-key="address" class="sortable">Address</th><th data-key="port" class="sortable">Port</th><th data-key="status" class="sortable">Status</th><th data-key="lastSeen" class="sortable">Last Seen</th><th>Actions</th></tr></thead>
                 <tbody></tbody>
             </table>
         </div>
     </div>
     <script>
+        const connectedSortState = [];
+        const knownSortState = [];
+
+        function getSortValue(p, key) {
+            switch (key) {
+                case 'id': return p.id;
+                case 'hostname': return (p.hostname || '').toLowerCase();
+                case 'address': return p.address;
+                case 'port': return p.port;
+                case 'session': return p.session_id || '';
+                case 'lastSeen': return new Date(p.last_seen).getTime();
+                case 'status': return p.connected ? 0 : 1;
+                default: return '';
+            }
+        }
+
+        function comparePeers(a, b, sortState) {
+            for (const {key, dir} of sortState) {
+                const va = getSortValue(a, key);
+                const vb = getSortValue(b, key);
+                if (va < vb) return -1 * dir;
+                if (va > vb) return 1 * dir;
+            }
+            return 0;
+        }
+
+        function handleSortClick(tableId, sortState, key, event) {
+            const idx = sortState.findIndex(s => s.key === key);
+            if (event.ctrlKey || event.metaKey) {
+                if (idx >= 0) {
+                    const existing = sortState[idx];
+                    sortState.splice(idx, 1);
+                    sortState.push({key, dir: -existing.dir});
+                } else {
+                    sortState.push({key, dir: -1});
+                }
+            } else {
+                if (idx === 0) {
+                    sortState[0].dir *= -1;
+                } else {
+                    sortState.length = 0;
+                    sortState.push({key, dir: -1});
+                }
+            }
+            renderTables();
+        }
+
+        function renderArrow(key, sortState) {
+            const idx = sortState.findIndex(s => s.key === key);
+            if (idx === -1) return '';
+            const dir = sortState[idx].dir;
+            const arrow = dir === -1 ? '&#9650;' : '&#9660;';
+            const order = sortState.length > 1 ? `<span class="sort-order">${idx + 1}</span>` : '';
+            return `<span class="sort-arrow">${arrow}${order}</span>`;
+        }
+
+        function initSortHeaders(tableId, sortState) {
+            const headers = document.querySelectorAll(`#${tableId} th.sortable`);
+            headers.forEach(th => {
+                th.onclick = (e) => handleSortClick(tableId, sortState, th.dataset.key, e);
+            });
+        }
+
+        let cachedData = null;
+
         async function loadStatus() {
             const res = await fetch('/api/status');
             const data = await res.json();
+            cachedData = data;
+            renderTables();
+        }
+
+        function renderTables() {
+            if (!cachedData) return;
+            const data = cachedData;
 
             document.getElementById('node-id').textContent = data.node.id.slice(0, 8) + '...';
             document.getElementById('node-hostname').textContent = data.node.hostname;
@@ -103,8 +181,9 @@ pub async fn index_handler() -> Html<&'static str> {
                 .map(addr => `<span style="display: inline-block; background: #0f3460; padding: 5px 10px; border-radius: 4px; margin: 3px;">${addr}:${data.node.port}</span>`)
                 .join('') || '<span style="color: #888;">No addresses available</span>';
 
+            const connectedPeers = [...data.connected_peers].sort((a, b) => comparePeers(a, b, connectedSortState));
             const connectedBody = document.querySelector('#connected-peers tbody');
-            connectedBody.innerHTML = data.connected_peers.map(p =>
+            connectedBody.innerHTML = connectedPeers.map(p =>
                 `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
                 <td class="status-connected">${p.session_id ? p.session_id.slice(0,8)+'...' : '-'}</td>
                 <td>${new Date(p.last_seen).toLocaleTimeString()}</td>
@@ -113,8 +192,9 @@ pub async fn index_handler() -> Html<&'static str> {
             document.getElementById('connected-count').textContent = data.connected_peers.length;
 
             const knownPeersOnly = data.known_peers.filter(p => !p.connected);
+            const sortedKnown = [...knownPeersOnly].sort((a, b) => comparePeers(a, b, knownSortState));
             const knownBody = document.querySelector('#known-peers tbody');
-            knownBody.innerHTML = knownPeersOnly.map(p =>
+            knownBody.innerHTML = sortedKnown.map(p =>
                 `<tr><td>${p.id.slice(0,16)}...</td><td>${p.hostname || '-'}</td><td>${p.address}</td><td>${p.port}</td>
                 <td class="status-disconnected">Disconnected</td>
                 <td>${new Date(p.last_seen).toLocaleTimeString()}</td>
@@ -124,6 +204,12 @@ pub async fn index_handler() -> Html<&'static str> {
                 </td></tr>`
             ).join('') || '<tr><td colspan="7">No known peers</td></tr>';
             document.getElementById('known-count').textContent = knownPeersOnly.length;
+
+            document.querySelectorAll('#connected-peers th.sortable, #known-peers th.sortable').forEach(th => {
+                const tableId = th.closest('table').id;
+                const ss = tableId === 'connected-peers' ? connectedSortState : knownSortState;
+                th.innerHTML = th.innerHTML.replace(/<span class="sort-arrow">.*<\/span>/, '') + renderArrow(th.dataset.key, ss);
+            });
         }
 
         async function disconnectPeer(peerId) {
@@ -134,7 +220,6 @@ pub async fn index_handler() -> Html<&'static str> {
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({peer_id: peerId})
                 });
-                console.log('Disconnect response:', response.status);
                 loadStatus();
             } catch (error) {
                 console.error('Disconnect failed:', error);
@@ -142,14 +227,12 @@ pub async fn index_handler() -> Html<&'static str> {
         }
 
         async function removePeer(peerId) {
-            console.log('Removing peer:', peerId);
             try {
                 const response = await fetch('/api/peers/remove', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({peer_id: peerId})
                 });
-                console.log('Remove response:', response.status);
                 loadStatus();
             } catch (error) {
                 console.error('Remove failed:', error);
@@ -157,14 +240,12 @@ pub async fn index_handler() -> Html<&'static str> {
         }
 
         async function connectPeer(peerId) {
-            console.log('Connecting to peer:', peerId);
             try {
                 const response = await fetch('/api/peers/connect', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({peer_id: peerId})
                 });
-                console.log('Connect response:', response.status);
                 loadStatus();
             } catch (error) {
                 console.error('Connect failed:', error);
@@ -183,6 +264,22 @@ pub async fn index_handler() -> Html<&'static str> {
             document.getElementById('peer-address').value = '';
             document.getElementById('peer-port').value = '';
             loadStatus();
+        }
+
+        initSortHeaders('connected-peers', connectedSortState);
+        initSortHeaders('known-peers', knownSortState);
+
+        async function refreshAll() {
+            try {
+                await fetch('/api/refresh', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({request_id: crypto.randomUUID()})
+                });
+            } catch (e) {
+                console.error('Refresh failed:', e);
+            }
+            setTimeout(loadStatus, 1000);
         }
 
         loadStatus();
@@ -277,6 +374,7 @@ pub async fn connect_to_unknown_peers(
                             existing.hostname = new_peer_info.hostname.clone();
                             existing.session_id = handshake.session_id.clone();
                             existing.last_seen = Utc::now();
+                            existing.health_check_failures = 0;
                         } else {
                             let mut peer = Peer::new(kp.address.clone(), kp.port);
                             peer.id = remote_id.clone();
@@ -393,6 +491,127 @@ pub async fn notify_peer_handler(
     Json(PeerNotificationResponse { accepted: true })
 }
 
+pub async fn refresh_handler(
+    State(state): State<AppState>,
+    Json(payload): Json<RefreshRequest>,
+) -> Json<RefreshResponse> {
+    let our_id = state.node_state.read().await.id.clone();
+
+    {
+        let mut seen = state.seen_refresh_ids.write().await;
+        let now = Instant::now();
+        seen.retain(|_, ts| now.duration_since(*ts) < Duration::from_secs(60));
+        if seen.contains_key(&payload.request_id) {
+            return Json(RefreshResponse {
+                accepted: false,
+                message: "Refresh already in progress".to_string(),
+            });
+        }
+        seen.insert(payload.request_id.clone(), now);
+    }
+
+    info!("Refresh requested (id: {}), re-handshaking with connected peers...", &payload.request_id[..8]);
+
+    let connected: Vec<(String, String, u16)> = {
+        let peers = state.peers.read().await;
+        peers
+            .values()
+            .filter(|p| p.connected)
+            .map(|p| (p.id.clone(), p.address.clone(), p.port))
+            .collect()
+    };
+
+    for (peer_id, addr, port) in &connected {
+        let node_state = state.node_state.read().await;
+        let our_address = if node_state.address == "0.0.0.0" {
+            node_state
+                .service_addresses
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "127.0.0.1".to_string())
+        } else {
+            node_state.address.clone()
+        };
+        let our_port = node_state.port;
+        let our_hostname = node_state.hostname.clone();
+        drop(node_state);
+
+        match state
+            .http_client
+            .post(format!("http://{}:{}/api/handshake", addr, port))
+            .json(&HandshakeRequest {
+                node_id: our_id.clone(),
+                address: our_address,
+                port: our_port,
+                hostname: our_hostname,
+            })
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
+                    if handshake.accepted {
+                        let mut peers = state.peers.write().await;
+                        if let Some(p) = peers.get_mut(peer_id) {
+                            p.session_id = handshake.session_id.clone();
+                            p.health_check_failures = 0;
+                            if let Some(hostname) = handshake.hostname {
+                                p.hostname = Some(hostname);
+                            }
+                        }
+                        drop(peers);
+
+                        if let Some(session_id) = handshake.session_id {
+                            let mut sessions = state.sessions.write().await;
+                            sessions.insert(session_id, Session::new(peer_id.clone()));
+                        }
+
+                        if let Some(kp) = handshake.known_peers {
+                            let state = state.clone();
+                            let exclude_addr = addr.clone();
+                            let exclude_port = *port;
+                            tokio::spawn(async move {
+                                connect_to_unknown_peers(&state, kp, &exclude_addr, exclude_port).await;
+                            });
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Refresh: failed to handshake with peer {}:{} - {}", addr, port, e);
+            }
+        }
+    }
+
+    let state_clone = state.clone();
+    let request_id = payload.request_id.clone();
+    tokio::spawn(async move {
+        let connected: Vec<(String, u16)> = {
+            let peers = state_clone.peers.read().await;
+            peers
+                .values()
+                .filter(|p| p.connected)
+                .map(|p| (p.address.clone(), p.port))
+                .collect()
+        };
+        for (addr, port) in connected {
+            let _ = state_clone
+                .http_client
+                .post(format!("http://{}:{}/api/refresh", addr, port))
+                .json(&RefreshRequest {
+                    request_id: request_id.clone(),
+                })
+                .send()
+                .await;
+        }
+    });
+
+    Json(RefreshResponse {
+        accepted: true,
+        message: format!("Refresh initiated with {} connected peer(s)", connected.len()),
+    })
+}
+
 pub async fn status_handler(State(state): State<AppState>) -> Json<StatusResponse> {
     let node_state = state.node_state.read().await.clone();
     let peers = state.peers.read().await;
@@ -465,6 +684,7 @@ pub async fn add_peer_handler(
                             existing.hostname = handshake.hostname.clone();
                             existing.session_id = handshake.session_id.clone();
                             existing.last_seen = Utc::now();
+                            existing.health_check_failures = 0;
                             peer = existing.clone();
                         }
                     } else {
@@ -756,6 +976,7 @@ pub async fn connect_peer_handler(
                                 p.session_id = handshake.session_id.clone();
                                 p.hostname = new_peer_info.hostname.clone();
                                 p.last_seen = Utc::now();
+                                p.health_check_failures = 0;
                             } else {
                                 let mut p = Peer::new(peer_address.clone(), peer_port);
                                 p.id = effective_id.clone();
@@ -910,6 +1131,7 @@ pub async fn handshake_handler(
     peer.hostname = Some(payload.hostname.clone());
     peer.connected = true;
     peer.session_id = Some(session_id.clone());
+    peer.health_check_failures = 0;
 
     {
         let mut peers = state.peers.write().await;
@@ -920,6 +1142,7 @@ pub async fn handshake_handler(
             existing_peer.connected = true;
             existing_peer.session_id = Some(session_id.clone());
             existing_peer.last_seen = Utc::now();
+            existing_peer.health_check_failures = 0;
         } else {
             peers.insert(peer.id.clone(), peer);
         }

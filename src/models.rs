@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::{Duration, Instant}};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -37,6 +37,8 @@ pub struct Peer {
     pub connected: bool,
     pub last_seen: DateTime<Utc>,
     pub session_id: Option<String>,
+    #[serde(default)]
+    pub health_check_failures: u32,
 }
 
 impl Peer {
@@ -49,6 +51,7 @@ impl Peer {
             connected: false,
             last_seen: Utc::now(),
             session_id: None,
+            health_check_failures: 0,
         }
     }
 
@@ -152,6 +155,7 @@ pub struct AppState {
     pub node_state: Arc<RwLock<NodeState>>,
     pub peers: Arc<RwLock<HashMap<PeerId, Peer>>>,
     pub sessions: Arc<RwLock<HashMap<String, Session>>>,
+    pub seen_refresh_ids: Arc<RwLock<HashMap<String, Instant>>>,
     pub http_client: reqwest::Client,
 }
 
@@ -161,6 +165,7 @@ impl AppState {
             node_state: Arc::new(RwLock::new(NodeState::new(address, port, hostname))),
             peers: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
+            seen_refresh_ids: Arc::new(RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -199,6 +204,17 @@ pub struct PeerNotification {
 #[derive(Debug, Serialize)]
 pub struct PeerNotificationResponse {
     pub accepted: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RefreshRequest {
+    pub request_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RefreshResponse {
+    pub accepted: bool,
+    pub message: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
