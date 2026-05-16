@@ -13,6 +13,21 @@ pub fn generate_peer_id(address: &str, port: u16) -> String {
     hex::encode(hasher.finalize())
 }
 
+fn load_or_create_node_id() -> String {
+    let path = std::path::Path::new("node_id");
+    if path.exists() {
+        if let Ok(data) = std::fs::read_to_string(path) {
+            let id = data.trim().to_string();
+            if !id.is_empty() {
+                return id;
+            }
+        }
+    }
+    let id = Uuid::new_v4().to_string();
+    let _ = std::fs::write(path, &id);
+    id
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Peer {
     pub id: PeerId,
@@ -82,7 +97,7 @@ impl NodeState {
             .collect();
 
         Self {
-            id: Uuid::new_v4().to_string(),
+            id: load_or_create_node_id(),
             address,
             port,
             hostname,
@@ -129,6 +144,7 @@ pub struct PeerInfo {
     pub address: String,
     pub port: u16,
     pub hostname: Option<String>,
+    pub node_id: Option<PeerId>,
 }
 
 #[derive(Clone)]

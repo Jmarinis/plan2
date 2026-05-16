@@ -210,17 +210,23 @@ pub async fn connect_to_unknown_peers(
             continue;
         }
 
+        let kp_id = kp
+            .node_id
+            .clone()
+            .unwrap_or_else(|| models::generate_peer_id(&kp.address, kp.port));
+        let our_node_id = state.node_state.read().await.id.clone();
+
         let already_known = {
             let peers = state.peers.read().await;
-            peers.values().any(|p| p.address == kp.address && p.port == kp.port)
+            peers.contains_key(&kp_id) || peers.values().any(|p| p.address == kp.address && p.port == kp.port)
         };
-        if already_known {
+        if already_known || kp_id == our_node_id {
             continue;
         }
 
         info!(
-            "Discovered unknown peer {}:{}, attempting connection...",
-            kp.address, kp.port
+            "Discovered unknown peer {}:{} (id: {}), attempting connection...",
+            kp.address, kp.port, &kp_id[..8.min(kp_id.len())]
         );
 
         let node_state = state.node_state.read().await;
@@ -235,14 +241,13 @@ pub async fn connect_to_unknown_peers(
         };
         let our_port = node_state.port;
         let our_hostname = node_state.hostname.clone();
-        let our_node_id = node_state.id.clone();
         drop(node_state);
 
         match state
             .http_client
             .post(format!("http://{}:{}/api/handshake", kp.address, kp.port))
             .json(&HandshakeRequest {
-                node_id: our_node_id,
+                node_id: our_node_id.clone(),
                 address: our_address,
                 port: our_port,
                 hostname: our_hostname,
@@ -251,29 +256,41 @@ pub async fn connect_to_unknown_peers(
             .await
         {
             Ok(resp) => {
-                if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
+            if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
                     if handshake.accepted {
-                        let mut peer = Peer::new(kp.address.clone(), kp.port);
-                        peer.connected = true;
-                        peer.hostname = handshake.hostname;
-                        peer.session_id = handshake.session_id;
-
-                        if let Some(session_id) = &peer.session_id {
-                            let mut sessions = state.sessions.write().await;
-                            sessions.insert(session_id.clone(), Session::new(peer.id.clone()));
-                        }
+                        let remote_id = handshake
+                            .node_id
+                            .unwrap_or_else(|| models::generate_peer_id(&kp.address, kp.port));
 
                         let mut peers = state.peers.write().await;
-                        let peer_id = peer.id.clone();
-                        peers.insert(peer_id, peer);
+                        if let Some(existing) = peers.get_mut(&remote_id) {
+                            existing.address = kp.address.clone();
+                            existing.port = kp.port;
+                            existing.connected = true;
+                            existing.hostname = handshake.hostname;
+                            existing.session_id = handshake.session_id.clone();
+                            existing.last_seen = Utc::now();
+                        } else {
+                            let mut peer = Peer::new(kp.address.clone(), kp.port);
+                            peer.id = remote_id;
+                            peer.connected = true;
+                            peer.hostname = handshake.hostname;
+                            peer.session_id = handshake.session_id.clone();
+
+                            if let Some(session_id) = &peer.session_id {
+                                let mut sessions = state.sessions.write().await;
+                                sessions.insert(session_id.clone(), Session::new(peer.id.clone()));
+                            }
+
+                            peers.insert(peer.id.clone(), peer);
+                        }
                         info!("Connected to discovered peer {}:{}", kp.address, kp.port);
                     }
                 }
             }
             Err(e) => {
                 let mut peers = state.peers.write().await;
-                let peer_id = models::generate_peer_id(&kp.address, kp.port);
-                peers.entry(peer_id).or_insert_with(|| {
+                peers.entry(kp_id).or_insert_with(|| {
                     let mut p = Peer::new(kp.address.clone(), kp.port);
                     p.hostname = kp.hostname;
                     p.last_seen = Utc::now();
@@ -309,22 +326,6 @@ pub async fn add_peer_handler(
     State(state): State<AppState>,
     Json(payload): Json<AddPeerRequest>,
 ) -> impl IntoResponse {
-    {
-        let peers = state.peers.read().await;
-        for peer in peers.values() {
-            if peer.address == payload.address && peer.port == payload.port {
-                return (
-                    StatusCode::OK,
-                    Json(AddPeerResponse {
-                        success: true,
-                        peer: Some(peer.clone()),
-                        message: "Peer already known".to_string(),
-                    }),
-                );
-            }
-        }
-    }
-
     let mut peer = Peer::new(payload.address.clone(), payload.port);
 
     let node_state = state.node_state.read().await;
@@ -346,7 +347,7 @@ pub async fn add_peer_handler(
         .http_client
         .post(format!("http://{}:{}/api/handshake", peer.address, peer.port))
         .json(&HandshakeRequest {
-            node_id: our_node_id,
+            node_id: our_node_id.clone(),
             address: our_address,
             port: our_port,
             hostname: our_hostname,
@@ -355,11 +356,35 @@ pub async fn add_peer_handler(
         .await
     {
         Ok(resp) => {
-            if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
+        if let Ok(handshake) = resp.json::<HandshakeResponse>().await {
                 if handshake.accepted {
-                    peer.connected = true;
-                    peer.session_id = handshake.session_id;
-                    peer.hostname = handshake.hostname;
+                    let remote_node_id = handshake
+                        .node_id
+                        .clone()
+                        .unwrap_or_else(|| peer.id.clone());
+
+                    let already_known = {
+                        let peers = state.peers.read().await;
+                        peers.contains_key(&remote_node_id)
+                    };
+
+                    if already_known {
+                        let mut peers = state.peers.write().await;
+                        if let Some(existing) = peers.get_mut(&remote_node_id) {
+                            existing.address = payload.address.clone();
+                            existing.port = payload.port;
+                            existing.connected = true;
+                            existing.hostname = handshake.hostname.clone();
+                            existing.session_id = handshake.session_id.clone();
+                            existing.last_seen = Utc::now();
+                            peer = existing.clone();
+                        }
+                    } else {
+                        peer.connected = true;
+                        peer.id = remote_node_id;
+                        peer.session_id = handshake.session_id;
+                        peer.hostname = handshake.hostname;
+                    }
 
                     if let Some(session_id) = &peer.session_id {
                         let mut sessions = state.sessions.write().await;
@@ -371,21 +396,26 @@ pub async fn add_peer_handler(
                     if let Some(known_peers) = handshake.known_peers {
                         let mut peers = state.peers.write().await;
                         for kp in known_peers {
-                            if kp.address != payload.address || kp.port != payload.port {
-                                if kp.address.parse::<std::net::IpAddr>().is_ok() {
-                                    let peer_id = models::generate_peer_id(&kp.address, kp.port);
-                                    peers.entry(peer_id).or_insert_with(|| {
-                                        let mut p = Peer::new(kp.address.clone(), kp.port);
-                                        p.hostname = kp.hostname;
-                                        p.last_seen = Utc::now();
-                                        p
-                                    });
-                                } else {
-                                    warn!(
-                                        "Skipping known peer with non-IP address: {}",
-                                        kp.address
-                                    );
-                                }
+                            let kp_id = kp.node_id.as_ref().cloned().unwrap_or_else(|| {
+                                models::generate_peer_id(&kp.address, kp.port)
+                            });
+                            if kp_id == our_node_id || kp_id == peer.id {
+                                continue;
+                            }
+                            if kp.address.parse::<std::net::IpAddr>().is_ok()
+                                && kp.address != payload.address
+                            {
+                                peers.entry(kp_id).or_insert_with(|| {
+                                    let mut p = Peer::new(kp.address.clone(), kp.port);
+                                    p.hostname = kp.hostname;
+                                    p.last_seen = Utc::now();
+                                    p
+                                });
+                            } else {
+                                warn!(
+                                    "Skipping known peer with non-IP address: {}",
+                                    kp.address
+                                );
                             }
                         }
                     }
@@ -412,7 +442,7 @@ pub async fn add_peer_handler(
 
     let mut peers = state.peers.write().await;
     let peer_id = peer.id.clone();
-    peers.insert(peer_id.clone(), peer.clone());
+    peers.entry(peer_id.clone()).or_insert(peer.clone());
 
     (
         StatusCode::OK,
@@ -558,6 +588,7 @@ pub async fn connect_peer_handler(
         let peer_address = peer.address.clone();
         let peer_port = peer.port;
         let peer_connected = peer.connected;
+        let peer_id = peer.id.clone();
         drop(peers);
 
         if peer_connected {
@@ -604,13 +635,31 @@ pub async fn connect_peer_handler(
                     Ok(handshake) => {
                         if handshake.accepted {
                             let known_to_exchange = handshake.known_peers.clone();
+                            let remote_node_id = handshake.node_id.clone().unwrap_or_default();
 
                             let mut peers = state.peers.write().await;
-                            if let Some(p) = peers.get_mut(&payload.peer_id) {
+                            let effective_id = if !remote_node_id.is_empty() && peers.contains_key(&remote_node_id) && remote_node_id != peer_id {
+                                remote_node_id.clone()
+                            } else {
+                                peer_id.clone()
+                            };
+
+                            if effective_id != peer_id {
+                                peers.remove(&peer_id);
+                            }
+
+                            if let Some(p) = peers.get_mut(&effective_id) {
                                 p.connected = true;
                                 p.session_id = handshake.session_id.clone();
                                 p.hostname = handshake.hostname;
                                 p.last_seen = Utc::now();
+                            } else {
+                                let mut p = Peer::new(peer_address.clone(), peer_port);
+                                p.id = effective_id.clone();
+                                p.connected = true;
+                                p.hostname = handshake.hostname;
+                                p.session_id = handshake.session_id.clone();
+                                peers.insert(effective_id.clone(), p);
                             }
 
                             if let Some(session_id) = handshake.session_id {
@@ -745,30 +794,23 @@ pub async fn handshake_handler(
         .insert(session_id.clone(), session);
 
     let connection_address = addr.ip().to_string();
+    let remote_node_id = payload.node_id.clone();
 
     let mut peer = Peer::new(connection_address.clone(), payload.port);
+    peer.id = remote_node_id.clone();
     peer.hostname = Some(payload.hostname.clone());
     peer.connected = true;
     peer.session_id = Some(session_id.clone());
 
     {
         let mut peers = state.peers.write().await;
-        let mut existing_id = None;
-        for (id, p) in peers.iter() {
-            if p.address == payload.address && p.port == payload.port {
-                existing_id = Some(id.clone());
-                break;
-            }
-        }
-        if let Some(id) = existing_id {
-            if let Some(existing_peer) = peers.get_mut(&id) {
-                existing_peer.hostname = Some(payload.hostname.clone());
-                existing_peer.connected = true;
-                existing_peer.session_id = Some(session_id.clone());
-                existing_peer.last_seen = Utc::now();
-            }
-            peer.id = id.clone();
-            peers.insert(id, peer);
+        if let Some(existing_peer) = peers.get_mut(&remote_node_id) {
+            existing_peer.address = connection_address.clone();
+            existing_peer.port = payload.port;
+            existing_peer.hostname = Some(payload.hostname.clone());
+            existing_peer.connected = true;
+            existing_peer.session_id = Some(session_id.clone());
+            existing_peer.last_seen = Utc::now();
         } else {
             peers.insert(peer.id.clone(), peer);
         }
@@ -779,12 +821,13 @@ pub async fn handshake_handler(
         .read()
         .await
         .values()
-        .filter(|p| !(p.address == payload.address && p.port == payload.port))
+        .filter(|p| p.id != remote_node_id)
         .filter(|p| p.address.parse::<std::net::IpAddr>().is_ok())
         .map(|p| models::PeerInfo {
             address: p.address.clone(),
             port: p.port,
             hostname: p.hostname.clone(),
+            node_id: Some(p.id.clone()),
         })
         .collect();
 
