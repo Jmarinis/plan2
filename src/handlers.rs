@@ -996,7 +996,7 @@ pub async fn remove_peer_handler(
             }
         }
     } else {
-        info!("Peer {} not found for removal (already removed)", payload.peer_id);
+        info!("Peer {} not found for removal (already removed) — address={:?} port={:?}", payload.peer_id, payload.address, payload.port);
     }
 
     (
@@ -1060,7 +1060,7 @@ pub async fn disconnect_peer_handler(
             info!("Disconnected from peer {}:{}", peer.address, peer.port);
         }
     } else {
-        info!("Peer {} not found for disconnect (already removed)", peer_id);
+        info!("Peer {} not found for disconnect (already removed) — address={:?} port={:?}", peer_id, payload.address, payload.port);
     }
 
     (
