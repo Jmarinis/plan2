@@ -471,10 +471,15 @@ pub async fn notify_peer_handler(
     }
 
     let mut peers = state.peers.write().await;
+
     if let Some(existing) = peers.get_mut(&kp_id) {
         if existing.address == peer_info.address && existing.port == peer_info.port {
             return Json(PeerNotificationResponse { accepted: true });
         }
+    }
+
+    if peers.values().any(|p| p.address == peer_info.address && p.port == peer_info.port && p.id != kp_id) {
+        return Json(PeerNotificationResponse { accepted: false });
     }
 
     peers.entry(kp_id).or_insert_with(|| {

@@ -129,9 +129,10 @@ pub async fn start(state: AppState) {
                                 .node_id
                                 .clone()
                                 .unwrap_or_default();
-                            if !remote_id.is_empty() && remote_id != peer_id {
+
+                            let effective_id = if !remote_id.is_empty() && remote_id != peer_id {
                                 warn!(
-                                    "Reconnect: peer at {}:{} has different node_id (expected: {}, got: {}), removing stale entry",
+                                    "Reconnect: peer at {}:{} has different node_id (expected: {}, got: {}), replacing stale entry",
                                     addr, port,
                                     &peer_id[..8.min(peer_id.len())],
                                     &remote_id[..8.min(remote_id.len())]
@@ -143,23 +144,32 @@ pub async fn start(state: AppState) {
                                         sessions.remove(&sid);
                                     }
                                 }
-                                continue;
-                            }
+                                remote_id.clone()
+                            } else {
+                                peer_id.clone()
+                            };
 
                             let known_to_exchange = handshake.known_peers.clone();
 
                             let mut peers = state.peers.write().await;
-                            if let Some(peer) = peers.get_mut(&peer_id) {
+                            if let Some(peer) = peers.get_mut(&effective_id) {
                                 peer.connected = true;
                                 peer.session_id = handshake.session_id.clone();
                                 peer.health_check_failures = 0;
                                 if let Some(hostname) = handshake.hostname {
                                     peer.hostname = Some(hostname);
                                 }
+                            } else {
+                                let mut new_peer = crate::models::Peer::new(addr.clone(), port);
+                                new_peer.id = effective_id.clone();
+                                new_peer.connected = true;
+                                new_peer.session_id = handshake.session_id.clone();
+                                new_peer.hostname = handshake.hostname.clone();
+                                peers.insert(effective_id.clone(), new_peer);
                             }
                             if let Some(session_id) = handshake.session_id {
                                 let mut sessions = state.sessions.write().await;
-                                sessions.insert(session_id, Session::new(String::new()));
+                                sessions.insert(session_id, Session::new(effective_id.clone()));
                             }
                             info!("Reconnected to peer {}:{}", addr, port);
 
