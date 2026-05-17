@@ -54,12 +54,20 @@ pub async fn start(state: AppState) {
                                     sessions.remove(&sid);
                                 }
                             }
-                            if !peers.contains_key(&status.node.id) {
+                            let new_id = status.node.id.clone();
+                            if let Some(existing) = peers.get_mut(&new_id) {
+                                existing.address = addr.clone();
+                                existing.port = *port;
+                                existing.connected = true;
+                                existing.hostname = Some(status.node.hostname.clone());
+                                existing.last_seen = Utc::now();
+                                existing.health_check_failures = 0;
+                            } else {
                                 let mut new_peer = crate::models::Peer::new(addr.clone(), *port);
-                                new_peer.id = status.node.id.clone();
+                                new_peer.id = new_id.clone();
                                 new_peer.hostname = Some(status.node.hostname.clone());
                                 new_peer.connected = true;
-                                peers.insert(status.node.id.clone(), new_peer);
+                                peers.insert(new_id, new_peer);
                             }
                             continue;
                         }
