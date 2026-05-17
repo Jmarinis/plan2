@@ -152,7 +152,6 @@ pub struct AppState {
     pub peers: Arc<RwLock<HashMap<PeerId, Peer>>>,
     pub sessions: Arc<RwLock<HashMap<String, Session>>>,
     pub seen_refresh_ids: Arc<RwLock<HashMap<String, Instant>>>,
-    pub seen_mcp_ids: Arc<RwLock<HashMap<String, Instant>>>,
     pub http_client: reqwest::Client,
 }
 
@@ -163,7 +162,6 @@ impl AppState {
             peers: Arc::new(RwLock::new(HashMap::new())),
             sessions: Arc::new(RwLock::new(HashMap::new())),
             seen_refresh_ids: Arc::new(RwLock::new(HashMap::new())),
-            seen_mcp_ids: Arc::new(RwLock::new(HashMap::new())),
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()
@@ -213,36 +211,6 @@ pub struct RefreshRequest {
 pub struct RefreshResponse {
     pub accepted: bool,
     pub message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct MeshMcpQuery {
-    pub request_id: String,
-    pub hop_count: u32,
-    pub tool_name: String,
-    pub arguments: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MeshMcpResult {
-    pub success: bool,
-    pub data: serde_json::Value,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MeshMcpPeerResult {
-    pub node_id: String,
-    pub result: MeshMcpResult,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MeshMcpResponse {
-    pub request_id: String,
-    pub node_id: String,
-    pub hop_count: u32,
-    pub local: MeshMcpResult,
-    pub peers: Vec<MeshMcpPeerResult>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
