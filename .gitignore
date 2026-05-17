@@ -15,3 +15,11 @@ Cargo.lock
 
 # Runtime state
 node_id
+
+# Node.js artifacts (not used by this project)
+package.json
+package-lock.json
+
+# Python bytecode cache
+__pycache__/
+*.pyc
