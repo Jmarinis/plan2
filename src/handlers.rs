@@ -977,23 +977,17 @@ pub async fn remove_peer_handler(
         }
 
         info!("Removed peer {}:{}", peer_clone.address, peer_clone.port);
-
-        (
-            StatusCode::OK,
-            Json(RemovePeerResponse {
-                success: true,
-                message: format!("Peer {} removed", payload.peer_id),
-            }),
-        )
     } else {
-        (
-            StatusCode::NOT_FOUND,
-            Json(RemovePeerResponse {
-                success: false,
-                message: "Peer not found".to_string(),
-            }),
-        )
+        info!("Peer {} not found for removal (already removed)", payload.peer_id);
     }
+
+    (
+        StatusCode::OK,
+        Json(RemovePeerResponse {
+            success: true,
+            message: format!("Peer {} removed", payload.peer_id),
+        }),
+    )
 }
 
 pub async fn disconnect_peer_handler(
@@ -1043,24 +1037,17 @@ pub async fn disconnect_peer_handler(
         }
 
         info!("Disconnected from peer {}:{}", peer.address, peer.port);
-
-        (
-            StatusCode::OK,
-            Json(RemovePeerResponse {
-                success: true,
-                message: format!("Disconnected from peer {}", peer_id),
-            }),
-        )
     } else {
-        info!("Peer {} not found for disconnect", peer_id);
-        (
-            StatusCode::NOT_FOUND,
-            Json(RemovePeerResponse {
-                success: false,
-                message: "Peer not found".to_string(),
-            }),
-        )
+        info!("Peer {} not found for disconnect (already removed)", peer_id);
     }
+
+    (
+        StatusCode::OK,
+        Json(RemovePeerResponse {
+            success: true,
+            message: format!("Disconnected from peer {}", peer_id),
+        }),
+    )
 }
 
 pub async fn connect_peer_handler(
