@@ -248,6 +248,8 @@ pub struct MeshMcpResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RemovePeerRequest {
     pub peer_id: PeerId,
+    pub address: Option<String>,
+    pub port: Option<u16>,
     pub notify_peer: Option<bool>,
 }
 
