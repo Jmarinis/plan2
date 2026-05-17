@@ -32,7 +32,13 @@ async fn main() {
             .unwrap_or_else(|_| "unknown".to_string())
     });
 
-    info!("Starting P2P node on {}:{} (hostname: {})", address, port, hostname);
+    info!(
+        "Starting P2P node v{} on {}:{} (hostname: {})",
+        env!("CARGO_PKG_VERSION"),
+        address,
+        port,
+        hostname
+    );
 
     let state = AppState::new(address.clone(), port, hostname);
     let node_id = state.node_state.read().await.id.clone();
