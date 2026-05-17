@@ -948,16 +948,14 @@ pub async fn remove_peer_handler(
 ) -> impl IntoResponse {
     let mut peers = state.peers.write().await;
 
-    if let Some(peer) = peers.get(&payload.peer_id) {
-        let peer_clone = peer.clone();
-
-        if peer_clone.connected {
-            if let Some(session_id) = &peer_clone.session_id {
+    if let Some(peer) = peers.remove(&payload.peer_id) {
+        if peer.connected {
+            if let Some(session_id) = &peer.session_id {
                 let _ = state
                     .http_client
                     .post(format!(
                         "http://{}:{}/api/disconnect-session",
-                        peer_clone.address, peer_clone.port
+                        peer.address, peer.port
                     ))
                     .json(&DisconnectRequest {
                         node_id: state.node_state.read().await.id.clone(),
@@ -969,14 +967,12 @@ pub async fn remove_peer_handler(
             }
         }
 
-        peers.remove(&payload.peer_id);
-
-        if let Some(session_id) = &peer_clone.session_id {
+        if let Some(session_id) = &peer.session_id {
             let mut sessions = state.sessions.write().await;
             sessions.remove(session_id);
         }
 
-        info!("Removed peer {}:{}", peer_clone.address, peer_clone.port);
+        info!("Removed peer {}:{}", peer.address, peer.port);
     } else {
         info!("Peer {} not found for removal (already removed)", payload.peer_id);
     }
@@ -995,12 +991,9 @@ pub async fn disconnect_peer_handler(
     Json(payload): Json<RemovePeerRequest>,
 ) -> impl IntoResponse {
     let peer_id = payload.peer_id.clone();
-    let peer_opt = {
-        let peers = state.peers.read().await;
-        peers.get(&peer_id).cloned()
-    };
+    let mut peers = state.peers.write().await;
 
-    if let Some(peer) = peer_opt {
+    if let Some(peer) = peers.get_mut(&peer_id) {
         info!(
             "Disconnect request for peer {} (connected: {})",
             peer_id, peer.connected
@@ -1023,18 +1016,12 @@ pub async fn disconnect_peer_handler(
                 .await;
         }
 
-        {
-            let mut peers = state.peers.write().await;
-            if let Some(p) = peers.get_mut(&peer_id) {
-                p.connected = false;
-                p.session_id = None;
-            }
+        if let Some(session_id) = peer.session_id.take() {
+            let mut sessions = state.sessions.write().await;
+            sessions.remove(&session_id);
         }
 
-        if let Some(session_id) = &peer.session_id {
-            let mut sessions = state.sessions.write().await;
-            sessions.remove(session_id);
-        }
+        peer.connected = false;
 
         info!("Disconnected from peer {}:{}", peer.address, peer.port);
     } else {

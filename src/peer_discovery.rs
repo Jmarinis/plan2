@@ -42,7 +42,7 @@ pub async fn start(state: AppState) {
                     if let Ok(status) = resp.json::<StatusResponse>().await {
                         if status.node.id != *peer_id {
                             warn!(
-                                "Health check: peer at {}:{} has different node_id (expected: {}, got: {}), removing stale entry",
+                                "Health check: peer at {}:{} has different node_id (expected: {}, got: {}), replacing stale entry",
                                 addr, port,
                                 &peer_id[..8.min(peer_id.len())],
                                 &status.node.id[..8.min(status.node.id.len())]
@@ -53,6 +53,13 @@ pub async fn start(state: AppState) {
                                     let mut sessions = state.sessions.write().await;
                                     sessions.remove(&sid);
                                 }
+                            }
+                            if !peers.contains_key(&status.node.id) {
+                                let mut new_peer = crate::models::Peer::new(addr.clone(), *port);
+                                new_peer.id = status.node.id.clone();
+                                new_peer.hostname = Some(status.node.hostname.clone());
+                                new_peer.connected = true;
+                                peers.insert(status.node.id.clone(), new_peer);
                             }
                             continue;
                         }
