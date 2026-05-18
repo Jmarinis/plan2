@@ -318,6 +318,9 @@ pub async fn connect_to_unknown_peers(
             peers.contains_key(&kp_id) || peers.values().any(|p| p.address == kp.address && p.port == kp.port)
         };
         if already_known || kp_id == our_node_id {
+            if kp_id != our_node_id {
+                info!("connect_to_unknown: skipping {} — already known at {}", &kp_id[..8.min(kp_id.len())], kp.address);
+            }
             continue;
         }
 
@@ -406,6 +409,9 @@ pub async fn connect_to_unknown_peers(
                         .filter(|(id, p)| p.address == kp.address && p.port == kp.port && *id != &kp_id)
                         .map(|(id, _)| id.clone())
                         .collect();
+                    if stale_ids.len() > 0 {
+                        info!("connect_to_unknown: removing {} stale entries for address {:?}", stale_ids.len(), stale_ids.iter().map(|s| &s[..8]).collect::<Vec<_>>());
+                    }
                     for stale_id in stale_ids {
                         if let Some(stale) = peers.remove(&stale_id) {
                             if let Some(sid) = stale.session_id {
@@ -496,6 +502,7 @@ pub async fn notify_peer_handler(
     }
 
     if peers.values().any(|p| p.address == peer_info.address && p.port == peer_info.port && p.id != kp_id && p.connected) {
+        info!("Notify: rejected {} (stale, connected peer at same address)", &kp_id[..8.min(kp_id.len())]);
         return Json(PeerNotificationResponse { accepted: false });
     }
 
@@ -513,13 +520,14 @@ pub async fn notify_peer_handler(
         }
     }
 
-    peers.entry(kp_id).or_insert_with(|| {
+    peers.entry(kp_id.clone()).or_insert_with(|| {
         let mut p = Peer::new(peer_info.address.clone(), peer_info.port);
         p.hostname = peer_info.hostname.clone();
         p.last_seen = Utc::now();
         info!(
-            "Discovered peer via notification: {}:{}",
-            peer_info.address, peer_info.port
+            "Discovered peer via notification: {}:{} (id: {})",
+            peer_info.address, peer_info.port,
+            &peer_info.node_id.as_ref().map(|s| &s[..8.min(s.len())]).unwrap_or("?")
         );
         p
     });
@@ -940,7 +948,7 @@ pub async fn add_peer_handler(
                                         }
                                     }
                                 }
-                                peers.entry(kp_id).or_insert_with(|| {
+    peers.entry(kp_id.clone()).or_insert_with(|| {
                                     let mut p = Peer::new(kp.address.clone(), kp.port);
                                     p.hostname = kp.hostname;
                                     p.last_seen = Utc::now();
