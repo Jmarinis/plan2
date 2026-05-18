@@ -333,8 +333,8 @@ pub async fn connect_to_unknown_peers(
                     }
                 }
             }
-            if peers.contains_key(&kp_id) {
-                info!("connect_to_unknown: skipping {} — already in map", &kp_id[..8.min(kp_id.len())]);
+            if peers.values().any(|p| p.address == kp.address && p.port == kp.port && p.connected) {
+                info!("connect_to_unknown: skipping {} — connected peer at same address", &kp_id[..8.min(kp_id.len())]);
                 continue;
             }
         }
