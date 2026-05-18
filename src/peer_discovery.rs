@@ -63,6 +63,8 @@ pub async fn start(state: AppState) {
                                 &status.node.id[..8.min(status.node.id.len())]
                             );
                             let mut peers = state.peers.write().await;
+                            let dump: Vec<String> = peers.iter().map(|(k, p)| format!("key={:.8} id={:.8} addr={} connected={}", k, p.id, p.address, p.connected)).collect();
+                            info!("Health check replace: map before removal: {:?}", dump);
                             if let Some(stale) = peers.remove(peer_id) {
                                 if let Some(sid) = stale.session_id {
                                     let mut sessions = state.sessions.write().await;
@@ -81,6 +83,8 @@ pub async fn start(state: AppState) {
                                     }
                                 }
                             }
+                            let dump2: Vec<String> = peers.iter().map(|(k, p)| format!("key={:.8} id={:.8}", k, p.id)).collect();
+                            info!("Health check replace: map after removal: {:?}", dump2);
                             let new_id = status.node.id.clone();
                             let replaced = if let Some(existing) = peers.get_mut(&new_id) {
                                 existing.address = addr.clone();
