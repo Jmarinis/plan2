@@ -31,6 +31,11 @@ pub async fn start(state: AppState) {
                 .collect()
         };
 
+        if connected_peers.len() > 0 {
+            let ids: Vec<String> = connected_peers.iter().map(|(id, _, _)| id[..8.min(id.len())].to_string()).collect();
+            info!("Health check tick: {} connected peers: {:?}", connected_peers.len(), ids);
+        }
+
         for (peer_id, addr, port) in &connected_peers {
             match state
                 .http_client
@@ -55,19 +60,30 @@ pub async fn start(state: AppState) {
                                 }
                             }
                             let new_id = status.node.id.clone();
-                            if let Some(existing) = peers.get_mut(&new_id) {
+                            let replaced = if let Some(existing) = peers.get_mut(&new_id) {
                                 existing.address = addr.clone();
                                 existing.port = *port;
                                 existing.connected = true;
                                 existing.hostname = Some(status.node.hostname.clone());
                                 existing.last_seen = Utc::now();
                                 existing.health_check_failures = 0;
+                                true
                             } else {
                                 let mut new_peer = crate::models::Peer::new(addr.clone(), *port);
                                 new_peer.id = new_id.clone();
                                 new_peer.hostname = Some(status.node.hostname.clone());
                                 new_peer.connected = true;
-                                peers.insert(new_id, new_peer);
+                                peers.insert(new_id.clone(), new_peer);
+                                true
+                            };
+                            if replaced {
+                                info!(
+                                    "Health check: replaced {} with {} at {}:{}, new connected count: {}",
+                                    &peer_id[..8.min(peer_id.len())],
+                                    &new_id[..8.min(new_id.len())],
+                                    addr, port,
+                                    peers.values().filter(|p| p.connected).count()
+                                );
                             }
                             continue;
                         }
