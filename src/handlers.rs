@@ -398,25 +398,29 @@ pub async fn connect_to_unknown_peers(
             }
             Err(e) => {
                 let mut peers = state.peers.write().await;
-                let stale_ids: Vec<PeerId> = peers
-                    .iter()
-                    .filter(|(id, p)| p.address == kp.address && p.port == kp.port && *id != &kp_id)
-                    .map(|(id, _)| id.clone())
-                    .collect();
-                for stale_id in stale_ids {
-                    if let Some(stale) = peers.remove(&stale_id) {
-                        if let Some(sid) = stale.session_id {
-                            let mut sessions = state.sessions.write().await;
-                            sessions.remove(&sid);
+                if peers.values().any(|p| p.address == kp.address && p.port == kp.port && p.id != kp_id && p.connected) {
+                    warn!("Skipping stale peer {}:{} (id: {}) — connected peer at same address", kp.address, kp.port, &kp_id[..8.min(kp_id.len())]);
+                } else {
+                    let stale_ids: Vec<PeerId> = peers
+                        .iter()
+                        .filter(|(id, p)| p.address == kp.address && p.port == kp.port && *id != &kp_id)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    for stale_id in stale_ids {
+                        if let Some(stale) = peers.remove(&stale_id) {
+                            if let Some(sid) = stale.session_id {
+                                let mut sessions = state.sessions.write().await;
+                                sessions.remove(&sid);
+                            }
                         }
                     }
+                    peers.entry(kp_id).or_insert_with(|| {
+                        let mut p = Peer::new(kp.address.clone(), kp.port);
+                        p.hostname = kp.hostname;
+                        p.last_seen = Utc::now();
+                        p
+                    });
                 }
-                peers.entry(kp_id).or_insert_with(|| {
-                    let mut p = Peer::new(kp.address.clone(), kp.port);
-                    p.hostname = kp.hostname;
-                    p.last_seen = Utc::now();
-                    p
-                });
                 warn!(
                     "Failed to connect to discovered peer {}:{} - {}",
                     kp.address, kp.port, e
@@ -489,6 +493,10 @@ pub async fn notify_peer_handler(
         if existing.address == peer_info.address && existing.port == peer_info.port {
             return Json(PeerNotificationResponse { accepted: true });
         }
+    }
+
+    if peers.values().any(|p| p.address == peer_info.address && p.port == peer_info.port && p.id != kp_id && p.connected) {
+        return Json(PeerNotificationResponse { accepted: false });
     }
 
     let stale_ids: Vec<PeerId> = peers
@@ -916,6 +924,9 @@ pub async fn add_peer_handler(
                             if kp.address.parse::<std::net::IpAddr>().is_ok()
                                 && kp.address != payload.address
                             {
+                                if peers.values().any(|p| p.address == kp.address && p.port == kp.port && p.id != kp_id && p.connected) {
+                                    continue;
+                                }
                                 let stale_ids: Vec<PeerId> = peers
                                     .iter()
                                     .filter(|(id, p)| p.address == kp.address && p.port == kp.port && *id != &kp_id)
