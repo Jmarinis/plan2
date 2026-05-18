@@ -37,6 +37,11 @@ pub async fn start(state: AppState) {
         }
 
         for (peer_id, addr, port) in &connected_peers {
+            {
+                let peers = state.peers.read().await;
+                let ids: Vec<String> = peers.values().filter(|p| p.connected).map(|p| format!("{:.8}", p.id)).collect();
+                info!("Health check: checking {:.8}@{}:{} — connected before: {:?}", peer_id, addr, port, ids);
+            }
             match state
                 .http_client
                 .get(format!("http://{}:{}/api/status", addr, port))
@@ -44,6 +49,11 @@ pub async fn start(state: AppState) {
                 .await
             {
                 Ok(resp) => {
+                    {
+                        let peers = state.peers.read().await;
+                        let ids: Vec<String> = peers.values().filter(|p| p.connected).map(|p| format!("{:.8}", p.id)).collect();
+                        info!("Health check: {:.8} responded — connected now: {:?}", peer_id, ids);
+                    }
                     if let Ok(status) = resp.json::<StatusResponse>().await {
                         if status.node.id != *peer_id {
                             warn!(
