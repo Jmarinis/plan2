@@ -217,5 +217,11 @@ pub async fn start(state: AppState) {
                 Err(_) => {}
             }
         }
+        {
+            let peers = state.peers.read().await;
+            let all_connected: Vec<String> = peers.values().filter(|p| p.connected).map(|p| format!("{:.8}@{}:{}", p.id, p.address, p.port)).collect();
+            let all_disconnected: Vec<String> = peers.values().filter(|p| !p.connected).map(|p| format!("{:.8}@{}:{}", p.id, p.address, p.port)).collect();
+            info!("Tick end: connected={:?} disconnected={:?}", all_connected, all_disconnected);
+        }
     }
 }
