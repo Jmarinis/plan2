@@ -5,7 +5,7 @@ use tracing::{info, warn};
 
 use crate::handlers;
 use crate::models::{
-    AppState, HandshakeRequest, HandshakeResponse, Session, StatusResponse,
+    AppState, HandshakeRequest, HandshakeResponse, PeerId, Session, StatusResponse,
 };
 
 const HEALTH_CHECK_FAILURE_THRESHOLD: u32 = 3;
@@ -67,6 +67,18 @@ pub async fn start(state: AppState) {
                                 if let Some(sid) = stale.session_id {
                                     let mut sessions = state.sessions.write().await;
                                     sessions.remove(&sid);
+                                }
+                            }
+                            let addr_stale: Vec<PeerId> = peers.iter()
+                                .filter(|(k, p)| p.address == *addr && p.port == *port && **k != status.node.id)
+                                .map(|(k, _)| k.clone())
+                                .collect();
+                            for k in addr_stale {
+                                if let Some(stale) = peers.remove(&k) {
+                                    if let Some(sid) = stale.session_id {
+                                        let mut sessions = state.sessions.write().await;
+                                        sessions.remove(&sid);
+                                    }
                                 }
                             }
                             let new_id = status.node.id.clone();
