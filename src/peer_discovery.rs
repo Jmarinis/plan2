@@ -77,12 +77,13 @@ pub async fn start(state: AppState) {
                                 true
                             };
                             if replaced {
+                                let all_ids: Vec<String> = peers.values().filter(|p| p.connected).map(|p| format!("{:.8}", p.id)).collect();
                                 info!(
-                                    "Health check: replaced {} with {} at {}:{}, new connected count: {}",
+                                    "Health check: replaced {} with {} at {}:{}, new connected: {:?}",
                                     &peer_id[..8.min(peer_id.len())],
                                     &new_id[..8.min(new_id.len())],
                                     addr, port,
-                                    peers.values().filter(|p| p.connected).count()
+                                    all_ids
                                 );
                             }
                             continue;
