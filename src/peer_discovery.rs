@@ -118,6 +118,10 @@ pub async fn start(state: AppState) {
 
         let peers_to_try: Vec<(String, String, u16)> = {
             let peers = state.peers.read().await;
+            let ids: Vec<String> = peers.values().filter(|p| !p.connected).map(|p| format!("{:.8}@{}:{}", p.id, p.address, p.port)).collect();
+            if ids.len() > 0 {
+                info!("Reconnect loop starting: {} disconnected peers: {:?}", ids.len(), ids);
+            }
             peers
                 .values()
                 .filter(|p| !p.connected)
