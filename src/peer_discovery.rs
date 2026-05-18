@@ -114,6 +114,11 @@ pub async fn start(state: AppState) {
                     }
                 }
             }
+            {
+                let peers = state.peers.read().await;
+                let ids: Vec<String> = peers.values().filter(|p| p.connected).map(|p| format!("{:.8}", p.id)).collect();
+                info!("Health check: after processing {:.8} connected={:?}", peer_id, ids);
+            }
         }
 
         let peers_to_try: Vec<(String, String, u16)> = {
