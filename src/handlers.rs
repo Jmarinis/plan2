@@ -313,15 +313,30 @@ pub async fn connect_to_unknown_peers(
             .unwrap_or_else(|| models::generate_peer_id(&kp.address, kp.port));
         let our_node_id = state.node_state.read().await.id.clone();
 
-        let already_known = {
-            let peers = state.peers.read().await;
-            peers.contains_key(&kp_id) || peers.values().any(|p| p.address == kp.address && p.port == kp.port)
-        };
-        if already_known || kp_id == our_node_id {
-            if kp_id != our_node_id {
-                info!("connect_to_unknown: skipping {} — already known at {}", &kp_id[..8.min(kp_id.len())], kp.address);
-            }
+        if kp_id == our_node_id {
             continue;
+        }
+
+        // If another peer already claims this address:port with a different node_id,
+        // remove it — the known_peers information is more recent.
+        {
+            let mut peers = state.peers.write().await;
+            let stale: Vec<PeerId> = peers.iter()
+                .filter(|(id, p)| p.address == kp.address && p.port == kp.port && **id != kp_id)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in stale {
+                if let Some(stale) = peers.remove(&id) {
+                    if let Some(sid) = stale.session_id {
+                        let mut sessions = state.sessions.write().await;
+                        sessions.remove(&sid);
+                    }
+                }
+            }
+            if peers.contains_key(&kp_id) {
+                info!("connect_to_unknown: skipping {} — already in map", &kp_id[..8.min(kp_id.len())]);
+                continue;
+            }
         }
 
         info!(
