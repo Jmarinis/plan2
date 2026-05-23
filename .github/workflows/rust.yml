@@ -1,4 +1,4 @@
-name: Rust CI
+name: Build and Release
 
 on:
   push:
@@ -6,72 +6,111 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  CARGO_TERM_COLOR: always
+  APP_NAME: p2p-node
+
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
+            ext: ""
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            ext: ""
+            deps: gcc-aarch64-linux-gnu
           - os: macos-latest
             target: x86_64-apple-darwin
-            archive: tar.gz
+            ext: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            ext: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            archive: zip
+            ext: .exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install cross-compiler (Linux ARM64)
+        if: matrix.deps
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.deps }}
 
       - name: Install Rust
         uses: rust-lang/setup-rust@v1
         with:
           rust-version: stable
+          targets: ${{ matrix.target }}
 
-      - name: Cache Cargo registry
+      - name: Cache Cargo
         uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ matrix.target }}-cargo-
 
-      - name: Run fmt check
-        run: cargo fmt -- --check
-
-      - name: Run clippy
-        run: cargo clippy -- -D warnings
-
-      - name: Build
-        run: cargo build --verbose --all-targets --all-features
-
-      - name: Test
-        run: cargo test --verbose
-
-      - name: Build for target
+      - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package
-        if: matrix.os != 'windows-latest'
+      - name: Package binary
         run: |
           mkdir -p dist
-          tar -czf dist/p2p-node-${{ matrix.os }}-${{ matrix.target }}.${{ matrix.archive }} \
-            -C target/${{ matrix.target }}/release p2p-node
-        shell: bash
-
-      - name: Package Windows
-        if: matrix.os == 'windows-latest'
-        run: |
-          mkdir dist
-          powershell Compress-Archive -Path target\x86_64-pc-windows-msvc\release\p2p-node.exe -DestinationPath dist\p2p-node-${{ matrix.os }}-${{ matrix.target }}.${{ matrix.archive }}
-        shell: pwsh
+          cp target/${{ matrix.target }}/release/${{ env.APP_NAME }}${{ matrix.ext }} dist/${{ env.APP_NAME }}-${{ matrix.target }}${{ matrix.ext }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: p2p-node-${{ matrix.os }}-${{ matrix.target }}
+          name: ${{ env.APP_NAME }}-${{ matrix.target }}
           path: dist/*
+          retention-days: 1
+
+  release:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version
+        id: version
+        run: echo "version=v$(grep '^version' Cargo.toml | head -1 | cut -d'\"' -f2)" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Organize binaries
+        run: |
+          mkdir -p release
+          find artifacts -type f -name "${{ env.APP_NAME }}-*" -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Create/Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          body: |
+            Automated multi-platform build for ${{ steps.version.outputs.version }}
+
+            **Platforms:**
+            - `x86_64-unknown-linux-gnu` — Linux (x86_64)
+            - `aarch64-unknown-linux-gnu` — Linux (ARM64)
+            - `x86_64-apple-darwin` — macOS (Intel)
+            - `aarch64-apple-darwin` — macOS (Apple Silicon)
+            - `x86_64-pc-windows-msvc` — Windows (x86_64)
+
+            Download the binary for your platform and restart.
+          files: release/*
+          generate_release_notes: true

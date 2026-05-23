@@ -94,8 +94,8 @@ pub async fn index_handler() -> Html<&'static str> {
         </div>
     </div>
     <script>
-        const connectedSortState = [];
-        const knownSortState = [];
+        const connectedSortState = [{key: 'hostname', dir: -1}];
+        const knownSortState = [{key: 'hostname', dir: -1}];
 
         function getSortValue(p, key) {
             switch (key) {
@@ -843,9 +843,26 @@ pub async fn status_handler(State(state): State<AppState>) -> Json<StatusRespons
     let peers = state.peers.read().await;
     let sessions = state.sessions.read().await.clone();
 
-    let connected_peers: Vec<Peer> = peers.values().filter(|p| p.connected).cloned().collect();
-    let known_peers: Vec<Peer> = peers.values().filter(|p| !p.connected).cloned().collect();
+    let mut connected_peers: Vec<Peer> = peers.values().filter(|p| p.connected).cloned().collect();
+    let mut known_peers: Vec<Peer> = peers.values().filter(|p| !p.connected).cloned().collect();
     let active_sessions: Vec<Session> = sessions.values().cloned().collect();
+
+    connected_peers.sort_by(|a, b| {
+        a.hostname
+            .as_deref()
+            .unwrap_or("")
+            .cmp(&b.hostname.as_deref().unwrap_or(""))
+            .then_with(|| a.address.cmp(&b.address))
+            .then_with(|| a.port.cmp(&b.port))
+    });
+    known_peers.sort_by(|a, b| {
+        a.hostname
+            .as_deref()
+            .unwrap_or("")
+            .cmp(&b.hostname.as_deref().unwrap_or(""))
+            .then_with(|| a.address.cmp(&b.address))
+            .then_with(|| a.port.cmp(&b.port))
+    });
 
     Json(StatusResponse {
         node: node_state,

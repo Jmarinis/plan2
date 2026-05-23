@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "p2p-mesh": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/ABSOLUTE/PATH/TO/plan2/mcp_server",
+        "python",
+        "-m",
+        "mcp_server.server"
+      ],
+      "env": {
+        "P2P_URL": "http://127.0.0.1:3000"
+      }
+    }
+  }
+}

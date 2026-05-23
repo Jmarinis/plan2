@@ -1,0 +1,11 @@
+[project]
+name = "p2p-mcp-server"
+version = "0.1.0"
+description = "MCP server for the P2P mesh network"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0.0",
+]
+
+[project.scripts]
+p2p-mcp = "mcp_server.server:serve"
