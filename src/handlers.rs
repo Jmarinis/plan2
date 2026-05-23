@@ -872,7 +872,13 @@ pub async fn status_handler(State(state): State<AppState>) -> Json<StatusRespons
 pub async fn update_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
     let os = std::env::consts::OS;
     let arch = std::env::consts::ARCH;
-    let label = format!("{}-{}", os, arch);
+    let arch_label = match arch {
+        "x86_64" => "x86_64",
+        "aarch64" => "arm64",
+        "arm64" => "arm64",
+        a => a,
+    };
+    let label = format!("{}-{}", os, arch_label);
     let ext = if os == "windows" { ".exe" } else { "" };
     let asset_name = format!("p2p-node-{}{}", label, ext);
 
