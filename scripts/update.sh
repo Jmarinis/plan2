@@ -3,7 +3,7 @@
 # Downloads the latest release binary from GitHub and restarts the node.
 #
 # Usage: ./update.sh [github_user/repo] [port]
-#   Default repo: the current project's origin remote
+#   Default repo: auto-detected from git remote
 #   Default port: 3000
 
 set -euo pipefail
@@ -13,7 +13,6 @@ PORT="${2:-3000}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_NAME="p2p-node"
-NODE_PID=""
 
 # Detect repo from git remote if not provided
 if [ -z "$REPO" ]; then
@@ -34,10 +33,10 @@ ARCH="$(uname -m)"
 OS="$(uname -s)"
 
 case "$OS:$ARCH" in
-    Linux:x86_64)     LABEL="linux-amd64" ;;
+    Linux:x86_64)     LABEL="linux-x86_64" ;;
     Linux:aarch64)    LABEL="linux-arm64" ;;
     Linux:arm64)      LABEL="linux-arm64" ;;
-    Darwin:x86_64)    LABEL="macos-amd64" ;;
+    Darwin:x86_64)    LABEL="macos-x86_64" ;;
     Darwin:arm64)     LABEL="macos-arm64" ;;
     Darwin:aarch64)   LABEL="macos-arm64" ;;
     *)
@@ -63,31 +62,16 @@ TAG="$(echo "$LATEST" | python3 -c "import sys,json; print(json.load(sys.stdin)[
 echo "  Latest:  $TAG"
 echo ""
 
-# Find the download URL for our platform
-DOWNLOAD_URL="$(echo "$LATEST" | python3 -c "
-import sys, json
-assets = json.load(sys.stdin)['assets']
-for a in assets:
-    if '$LABEL' in a['name']:
-        print(a['browser_download_url'])
-        break
-" 2>/dev/null)" || {
-    echo "No binary found for $LABEL in release $TAG"
-    exit 1
-}
+DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$APP_NAME-$LABEL"
 
 DOWNLOAD_DIR="$(mktemp -d)"
 trap "rm -rf '$DOWNLOAD_DIR'" EXIT
 
 echo "Downloading $APP_NAME-$LABEL..."
-curl -sfL "$DOWNLOAD_URL" -o "$DOWNLOAD_DIR/$APP_NAME"
-chmod +x "$DOWNLOAD_DIR/$APP_NAME"
-
-DOWNLOAD_DIR="$(mktemp -d)"
-trap "rm -rf '$DOWNLOAD_DIR'" EXIT
-
-echo "Downloading $APP_NAME-$TARGET..."
-curl -sfL "$DOWNLOAD_URL" -o "$DOWNLOAD_DIR/$APP_NAME"
+curl -sfL "$DOWNLOAD_URL" -o "$DOWNLOAD_DIR/$APP_NAME" || {
+    echo "Download failed. Check if $DOWNLOAD_URL exists."
+    exit 1
+}
 chmod +x "$DOWNLOAD_DIR/$APP_NAME"
 
 # Stop the running node
@@ -96,7 +80,6 @@ if [ -n "$NODE_PID" ]; then
     echo "Stopping running node (PID: $NODE_PID)..."
     kill "$NODE_PID" 2>/dev/null || true
     sleep 2
-    # Force kill if still running
     if kill -0 "$NODE_PID" 2>/dev/null; then
         kill -9 "$NODE_PID" 2>/dev/null || true
         sleep 1
@@ -104,26 +87,12 @@ if [ -n "$NODE_PID" ]; then
 fi
 
 # Replace binary
-INSTALL_DIR="$(dirname "$(realpath "$0" 2>/dev/null || readlink -f "$0" 2>/dev/null || echo "$SCRIPT_DIR")")"
-if [ -f "$PROJECT_DIR/target/release/$APP_NAME" ]; then
-    echo "Replacing project binary..."
-    cp "$DOWNLOAD_DIR/$APP_NAME" "$PROJECT_DIR/target/release/$APP_NAME"
-fi
-
-# Also copy to a global location if we can find the running binary's path
 OLD_BINARY="$(which "$APP_NAME" 2>/dev/null || echo "$PROJECT_DIR/target/release/$APP_NAME")"
-if [ -f "$OLD_BINARY" ] && [ ! -w "$OLD_BINARY" ]; then
-    echo "Cannot write to $OLD_BINARY, installing to project binary instead."
-    OLD_BINARY="$PROJECT_DIR/target/release/$APP_NAME"
-    mkdir -p "$(dirname "$OLD_BINARY")"
-fi
+INSTALL_DIR="$(dirname "$OLD_BINARY")"
+mkdir -p "$INSTALL_DIR"
 echo "Installing to $OLD_BINARY..."
 cp "$DOWNLOAD_DIR/$APP_NAME" "$OLD_BINARY"
 chmod +x "$OLD_BINARY"
-
-# Read env vars
-P2P_ADDRESS="${P2P_ADDRESS:-0.0.0.0}"
-P2P_HOSTNAME="${P2P_HOSTNAME:-}"
 
 # Restart
 echo ""
@@ -135,10 +104,10 @@ disown
 
 sleep 2
 if kill -0 "$NEW_PID" 2>/dev/null; then
-    echo "✅ Node restarted (PID: $NEW_PID)"
-    echo "   http://127.0.0.1:$PORT"
-    echo "   Logs: /tmp/p2p_node_update.log"
+    echo "Node restarted (PID: $NEW_PID)"
+    echo "  http://127.0.0.1:$PORT"
+    echo "  Logs: /tmp/p2p_node_update.log"
 else
-    echo "❌ Node failed to start. Check logs: /tmp/p2p_node_update.log"
+    echo "Node failed to start. Check logs: /tmp/p2p_node_update.log"
     exit 1
 fi

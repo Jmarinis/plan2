@@ -11,6 +11,7 @@ param(
 )
 
 $AppName = "p2p-node"
+$Ext = ".exe"
 
 # Try to detect repo from git remote
 if (-not $Repo) {
@@ -25,12 +26,10 @@ if (-not $Repo) {
     exit 1
 }
 
-$Ext = ".exe"
-
 # Detect platform
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -eq "AMD64") {
-    $Label = "windows-amd64"
+    $Label = "windows-x86_64"
 } else {
     Write-Host "Unsupported architecture: $arch"
     exit 1
@@ -50,26 +49,19 @@ $tag = $latest.tag_name
 Write-Host "  Latest: $tag"
 Write-Host ""
 
-# Find download URL
-$downloadUrl = $null
-foreach ($asset in $latest.assets) {
-    if ($asset.name -match [regex]::Escape($Label)) {
-        $downloadUrl = $asset.browser_download_url
-        break
-    }
-}
-
-if (-not $downloadUrl) {
-    Write-Host "No binary found for $Label in release $tag"
-    exit 1
-}
+$downloadUrl = "https://github.com/$Repo/releases/download/$tag/$AppName-$Label$Ext"
 
 $downloadDir = Join-Path $env:TEMP "p2p-update-$(Get-Random)"
 New-Item -ItemType Directory -Path $downloadDir -Force | Out-Null
 
 $downloadedFile = Join-Path $downloadDir "$AppName$Ext"
-Write-Host "Downloading $AppName-$Target..."
-Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadedFile -UseBasicParsing
+Write-Host "Downloading $AppName-$Label..."
+try {
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $downloadedFile -UseBasicParsing
+} catch {
+    Write-Host "Download failed. Check if $downloadUrl exists."
+    exit 1
+}
 
 # Find and stop the running node
 $nodeProcess = Get-Process -Name $AppName -ErrorAction SilentlyContinue
@@ -99,9 +91,9 @@ $process = Start-Process -FilePath $installPath -WindowStyle Hidden -PassThru -R
 
 Start-Sleep -Seconds 2
 if (-not $process.HasExited) {
-    Write-Host "✅ Node restarted (PID: $($process.Id))"
-    Write-Host "   http://127.0.0.1:$Port"
+    Write-Host "Node restarted (PID: $($process.Id))"
+    Write-Host "  http://127.0.0.1:$Port"
 } else {
-    Write-Host "❌ Node failed to start. Check: $logFile"
+    Write-Host "Node failed to start. Check: $logFile"
     exit 1
 }
