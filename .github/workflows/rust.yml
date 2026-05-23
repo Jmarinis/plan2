@@ -48,7 +48,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Get version
         id: version
-        run: echo "version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import sys,json; print(\"v\"+json.load(sys.stdin)[\"packages\"][0][\"version\"])')" >> $GITHUB_OUTPUT
+        run: |
+          VERSION="v$(grep '^version ' Cargo.toml | sed 's/.*"\(.*\)"/\1/')"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
       - name: Download all artifacts
         uses: actions/download-artifact@v4
       - name: Prepare release artifacts
