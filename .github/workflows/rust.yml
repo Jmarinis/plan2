@@ -24,11 +24,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
       - name: Rename binary with platform label
+        shell: bash
         run: |
-          BINARY="target/release/p2p_node"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            BINARY="target/release/p2p_node.exe"
-          fi
+          EXT=""
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then EXT=".exe"; fi
+          BINARY="target/release/p2p_node${EXT}"
           if [ -f "$BINARY" ]; then
             cp "$BINARY" "target/release/p2p-node-${{ matrix.label }}"
           fi
