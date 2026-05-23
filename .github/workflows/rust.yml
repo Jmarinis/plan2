@@ -11,69 +11,63 @@ env:
   APP_NAME: p2p-node
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: dtolnay/rust-toolchain@stable
-
-      - name: Build
-        run: cargo build --release
-
-      - name: Determine label and ext
-        shell: bash
-        run: |
-          ARCH=$(uname -m)
-          case "${{ matrix.os }}" in
-            ubuntu-latest) echo "label=linux-$ARCH" >> $GITHUB_OUTPUT; echo "ext=" >> $GITHUB_OUTPUT ;;
-            macos-latest) echo "label=macos-$ARCH" >> $GITHUB_OUTPUT; echo "ext=" >> $GITHUB_OUTPUT ;;
-            windows-latest) echo "label=windows-$ARCH" >> $GITHUB_OUTPUT; echo "ext=.exe" >> $GITHUB_OUTPUT ;;
-          esac
-        id: platform
-
-      - name: Package
-        run: |
-          mkdir -p dist
-          cp target/release/${{ env.APP_NAME }}${{ steps.platform.outputs.ext }} dist/${{ env.APP_NAME }}-${{ steps.platform.outputs.label }}${{ steps.platform.outputs.ext }}
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - run: cargo build --release
+      - run: mkdir -p dist && cp target/release/$APP_NAME dist/$APP_NAME-linux-x86_64
+      - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-${{ steps.platform.outputs.label }}
+          name: ${{ env.APP_NAME }}-linux-x86_64
           path: dist/*
-          retention-days: 1
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+      - run: ARCH=$(uname -m) && mkdir -p dist && cp target/release/$APP_NAME dist/$APP_NAME-macos-$ARCH
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-macos
+          path: dist/*
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release
+      - run: mkdir dist && copy target\release\$env:APP_NAME.exe dist\$env:APP_NAME-windows-x86_64.exe
+        shell: pwsh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-windows-x86_64
+          path: dist/*
 
   release:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: build
+    needs: [build-linux, build-macos, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
       - name: Get version
         id: version
         run: echo "version=v$(grep '^version' Cargo.toml | head -1 | cut -d'\"' -f2)" >> $GITHUB_OUTPUT
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Organize binaries
+      - name: Organize
         run: |
           mkdir -p release
-          find artifacts -type f -name "${{ env.APP_NAME }}-*" -exec cp {} release/ \;
+          find artifacts -type f -exec cp {} release/ \;
           ls -la release/
-
-      - name: Create/Update Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: ${{ steps.version.outputs.version }}
