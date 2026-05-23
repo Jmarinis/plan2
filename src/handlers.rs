@@ -1073,6 +1073,13 @@ pub async fn add_peer_handler(
                         }
                     }
 
+                    let mut peers = state.peers.write().await;
+                    let peer_id = peer.id.clone();
+                    peers.entry(peer_id.clone()).or_insert_with(|| {
+                        info!("Inserting new peer {}:{} (id: {})", peer.address, peer.port, &peer.id[..8]);
+                        peer.clone()
+                    });
+
                     info!("Connected to peer {}:{}", peer.address, peer.port);
 
                     if let Some(kp) = received_known_peers {
@@ -1082,29 +1089,48 @@ pub async fn add_peer_handler(
                             connect_to_unknown_peers(&state, kp, &exclude_addr, payload.port).await;
                         });
                     }
+
+                    let pid = peer.id.clone();
+                    return (
+                        StatusCode::OK,
+                        Json(AddPeerResponse {
+                            success: true,
+                            peer: Some(peer),
+                            message: format!("Peer added with id: {}", pid),
+                        }),
+                    );
+                } else {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(AddPeerResponse {
+                            success: false,
+                            peer: None,
+                            message: "Handshake not accepted".to_string(),
+                        }),
+                    );
                 }
+            } else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(AddPeerResponse {
+                        success: false,
+                        peer: None,
+                        message: "Failed to parse handshake response".to_string(),
+                    }),
+                );
             }
         }
         Err(e) => {
-            warn!(
-                "Failed to connect to peer {}:{} - {}",
-                peer.address, peer.port, e
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(AddPeerResponse {
+                    success: false,
+                    peer: None,
+                    message: format!("Handshake failed: {}", e),
+                }),
             );
         }
     }
-
-    let mut peers = state.peers.write().await;
-    let peer_id = peer.id.clone();
-    peers.entry(peer_id.clone()).or_insert(peer.clone());
-
-    (
-        StatusCode::OK,
-        Json(AddPeerResponse {
-            success: true,
-            peer: Some(peer),
-            message: format!("Peer {} added", peer_id),
-        }),
-    )
 }
 
 pub async fn remove_peer_handler(
