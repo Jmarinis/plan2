@@ -28,11 +28,13 @@ if (-not $Repo) {
 
 # Detect platform
 $arch = $env:PROCESSOR_ARCHITECTURE
-if ($arch -eq "AMD64") {
-    $Label = "windows-x86_64"
-} else {
-    Write-Host "Unsupported architecture: $arch"
-    exit 1
+switch ($arch) {
+    "AMD64" { $Label = "windows-x86_64" }
+    "ARM64" { $Label = "windows-arm64" }
+    default {
+        Write-Host "Unsupported architecture: $arch"
+        exit 1
+    }
 }
 
 Write-Host "=== P2P Node Update ==="

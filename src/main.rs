@@ -33,8 +33,9 @@ async fn main() {
     });
 
     info!(
-        "Starting P2P node v{} on {}:{} (hostname: {})",
+        "Starting P2P node v{} ({}) on {}:{} (hostname: {})",
         env!("CARGO_PKG_VERSION"),
+        std::env::consts::ARCH,
         address,
         port,
         hostname

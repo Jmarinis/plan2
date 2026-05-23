@@ -13,30 +13,63 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
             label: linux-x86_64
+            deps: ""
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            label: linux-arm64
+            deps: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu
           - os: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+            deps: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
             label: macos-x86_64
+            deps: ""
           - os: windows-latest
+            target: x86_64-pc-windows-msvc
             label: windows-x86_64
+            deps: ""
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            label: windows-arm64
+            deps: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build --release
+      - name: Install cross-compilation dependencies
+        if: matrix.deps != ''
+        run: ${{ matrix.deps }}
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_INCREMENTAL: 0
       - name: Rename binary with platform label
         shell: bash
         run: |
           EXT=""
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then EXT=".exe"; fi
-          BINARY="target/release/p2p_node${EXT}"
-          if [ -f "$BINARY" ]; then
-            cp "$BINARY" "target/release/p2p-node-${{ matrix.label }}"
+          case "${{ matrix.target }}" in
+            *windows*) EXT=".exe" ;;
+          esac
+          SRC="target/${{ matrix.target }}/release/p2p_node${EXT}"
+          DST="target/${{ matrix.target }}/release/p2p-node-${{ matrix.label }}"
+          if [ -f "$SRC" ]; then
+            cp "$SRC" "$DST"
+            echo "Renamed: $SRC -> $DST"
+          else
+            echo "Not found: $SRC"
+            exit 1
           fi
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
           name: p2p-node-${{ matrix.label }}
-          path: target/release/p2p-node-${{ matrix.label }}
+          path: target/${{ matrix.target }}/release/p2p-node-${{ matrix.label }}
 
   release:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -62,7 +95,7 @@ jobs:
             fi
           done
           ls -la release_artifacts/
-      - name: Create Release
+      - name: Create or Update Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
@@ -70,4 +103,5 @@ jobs:
           body: |
             Automated release for ${{ steps.version.outputs.version }}
           generate_release_notes: true
+          overwrite_files: true
           files: release_artifacts/*
