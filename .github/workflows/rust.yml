@@ -11,12 +11,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            label: linux-x86_64
+          - os: macos-latest
+            label: macos-x86_64
+          - os: windows-latest
+            label: windows-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: p2p-node-${{ matrix.label }}
+          path: target/release/p2p-node*
 
   release:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -29,6 +40,17 @@ jobs:
       - name: Get version
         id: version
         run: echo "version=v$(grep '^version' Cargo.toml | head -1 | cut -d'\"' -f2)" >> $GITHUB_OUTPUT
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+      - name: Prepare release artifacts
+        run: |
+          mkdir -p release_artifacts
+          for dir in p2p-node-*; do
+            if [ -d "$dir" ]; then
+              find "$dir" -type f -exec cp {} release_artifacts/ \;
+            fi
+          done
+          ls -la release_artifacts/
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
@@ -36,7 +58,6 @@ jobs:
           name: ${{ steps.version.outputs.version }}
           body: |
             Automated release for ${{ steps.version.outputs.version }}
-            
-            Binaries will be added once the build succeeds.
           generate_release_notes: true
           draft: true
+          files: release_artifacts/*
