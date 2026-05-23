@@ -25,23 +25,21 @@ if (-not $Repo) {
     exit 1
 }
 
+$Ext = ".exe"
+
 # Detect platform
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -eq "AMD64") {
-    $Target = "x86_64-pc-windows-msvc"
-} elseif ($arch -eq "ARM64") {
-    $Target = "aarch64-pc-windows-msvc"
+    $Label = "windows-amd64"
 } else {
     Write-Host "Unsupported architecture: $arch"
     exit 1
 }
 
-$Ext = ".exe"
-
 Write-Host "=== P2P Node Update ==="
-Write-Host "  Repo:   $Repo"
-Write-Host "  Target: $Target"
-Write-Host "  Port:   $Port"
+Write-Host "  Repo:  $Repo"
+Write-Host "  Label: $Label"
+Write-Host "  Port:  $Port"
 Write-Host ""
 
 # Fetch latest release
@@ -55,14 +53,14 @@ Write-Host ""
 # Find download URL
 $downloadUrl = $null
 foreach ($asset in $latest.assets) {
-    if ($asset.name -match [regex]::Escape($Target)) {
+    if ($asset.name -match [regex]::Escape($Label)) {
         $downloadUrl = $asset.browser_download_url
         break
     }
 }
 
 if (-not $downloadUrl) {
-    Write-Host "No binary found for $Target in release $tag"
+    Write-Host "No binary found for $Label in release $tag"
     exit 1
 }
 

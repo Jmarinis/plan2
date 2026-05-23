@@ -34,12 +34,12 @@ ARCH="$(uname -m)"
 OS="$(uname -s)"
 
 case "$OS:$ARCH" in
-    Linux:x86_64)     TARGET="x86_64-unknown-linux-gnu" ;;
-    Linux:aarch64)    TARGET="aarch64-unknown-linux-gnu" ;;
-    Linux:arm64)      TARGET="aarch64-unknown-linux-gnu" ;;
-    Darwin:x86_64)    TARGET="x86_64-apple-darwin" ;;
-    Darwin:arm64)     TARGET="aarch64-apple-darwin" ;;
-    Darwin:aarch64)   TARGET="aarch64-apple-darwin" ;;
+    Linux:x86_64)     LABEL="linux-amd64" ;;
+    Linux:aarch64)    LABEL="linux-arm64" ;;
+    Linux:arm64)      LABEL="linux-arm64" ;;
+    Darwin:x86_64)    LABEL="macos-amd64" ;;
+    Darwin:arm64)     LABEL="macos-arm64" ;;
+    Darwin:aarch64)   LABEL="macos-arm64" ;;
     *)
         echo "Unsupported platform: $OS $ARCH"
         exit 1
@@ -48,7 +48,7 @@ esac
 
 echo "=== P2P Node Update ==="
 echo "  Repo:    $REPO"
-echo "  Target:  $TARGET"
+echo "  Label:   $LABEL"
 echo "  Port:    $PORT"
 echo ""
 
@@ -63,18 +63,25 @@ TAG="$(echo "$LATEST" | python3 -c "import sys,json; print(json.load(sys.stdin)[
 echo "  Latest:  $TAG"
 echo ""
 
-# Find the download URL for our target
+# Find the download URL for our platform
 DOWNLOAD_URL="$(echo "$LATEST" | python3 -c "
 import sys, json
 assets = json.load(sys.stdin)['assets']
 for a in assets:
-    if '$TARGET' in a['name']:
+    if '$LABEL' in a['name']:
         print(a['browser_download_url'])
         break
 " 2>/dev/null)" || {
-    echo "No binary found for $TARGET in release $TAG"
+    echo "No binary found for $LABEL in release $TAG"
     exit 1
 }
+
+DOWNLOAD_DIR="$(mktemp -d)"
+trap "rm -rf '$DOWNLOAD_DIR'" EXIT
+
+echo "Downloading $APP_NAME-$LABEL..."
+curl -sfL "$DOWNLOAD_URL" -o "$DOWNLOAD_DIR/$APP_NAME"
+chmod +x "$DOWNLOAD_DIR/$APP_NAME"
 
 DOWNLOAD_DIR="$(mktemp -d)"
 trap "rm -rf '$DOWNLOAD_DIR'" EXIT
