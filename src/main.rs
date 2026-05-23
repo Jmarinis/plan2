@@ -57,6 +57,7 @@ async fn main() {
         .route("/api/handshake", post(handlers::handshake_handler))
         .route("/api/disconnect", post(handlers::disconnect_handler))
         .route("/api/disconnect-session", post(handlers::disconnect_session_handler))
+        .route("/api/update", get(handlers::update_handler))
         .with_state(state.clone());
 
     tokio::spawn(peer_discovery::start(state.clone()));

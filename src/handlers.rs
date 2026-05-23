@@ -680,30 +680,27 @@ async fn execute_mcp_tool_locally(
     let base_url = format!("http://127.0.0.1:{}", port);
 
     match tool_name {
-        "get_status" => match state
-            .http_client
-            .get(format!("{}/api/status", base_url))
-            .send()
-            .await
-        {
-            Ok(resp) => match resp.json::<serde_json::Value>().await {
-                Ok(data) => MeshMcpResult {
-                    success: true,
-                    data,
-                    error: None,
+        "get_status" | "update" => {
+            let path = match tool_name {
+                "update" => "/api/update",
+                _ => "/api/status",
+            };
+            match state.http_client.get(format!("{}{}", base_url, path)).send().await {
+                Ok(resp) => match resp.json::<serde_json::Value>().await {
+                    Ok(data) => MeshMcpResult { success: true, data, error: None },
+                    Err(e) => MeshMcpResult {
+                        success: false,
+                        data: serde_json::Value::Null,
+                        error: Some(format!("Failed to parse {} response: {}", tool_name, e)),
+                    },
                 },
                 Err(e) => MeshMcpResult {
                     success: false,
                     data: serde_json::Value::Null,
-                    error: Some(format!("Failed to parse status: {}", e)),
+                    error: Some(format!("Local {} request failed: {}", tool_name, e)),
                 },
-            },
-            Err(e) => MeshMcpResult {
-                success: false,
-                data: serde_json::Value::Null,
-                error: Some(format!("Local status request failed: {}", e)),
-            },
-        },
+            }
+        }
         "refresh" => {
             let request_id = Uuid::new_v4().to_string();
             match state
@@ -870,6 +867,87 @@ pub async fn status_handler(State(state): State<AppState>) -> Json<StatusRespons
         known_peers,
         active_sessions,
     })
+}
+
+pub async fn update_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    let label = format!("{}-{}", os, arch);
+    let ext = if os == "windows" { ".exe" } else { "" };
+    let asset_name = format!("p2p-node-{}{}", label, ext);
+
+    let release_url = "https://api.github.com/repos/Jmarinis/plan2/releases/latest";
+    let resp = match state.http_client.get(release_url).header("User-Agent", "p2p-node").send().await {
+        Ok(r) => r,
+        Err(e) => return Json(serde_json::json!({"success": false, "error": format!("Failed to fetch release: {}", e)})),
+    };
+    let release = match resp.json::<serde_json::Value>().await {
+        Ok(data) => data,
+        Err(e) => return Json(serde_json::json!({"success": false, "error": format!("Failed to parse release: {}", e)})),
+    };
+    let tag = release["tag_name"].as_str().unwrap_or("latest").trim_start_matches('v');
+    let dl_url = format!("https://github.com/Jmarinis/plan2/releases/download/v{}/{}", tag, asset_name);
+
+    let client = state.http_client.clone();
+
+    tokio::spawn(async move {
+        let resp = match client.get(&dl_url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Update download failed: {}", e);
+                return;
+            }
+        };
+        let bytes = match resp.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("Update read body failed: {}", e);
+                return;
+            }
+        };
+        let current_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("p2p-node"));
+        let tmp_path = format!("{}.new", current_exe.display());
+
+        if let Err(e) = std::fs::write(&tmp_path, &bytes) {
+            warn!("Failed to write updated binary: {}", e);
+            return;
+        }
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(&tmp_path) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o755);
+                let _ = std::fs::set_permissions(&tmp_path, perms);
+            }
+        }
+
+        info!("Downloaded update to {}, restarting...", tmp_path);
+
+        let shell = if cfg!(target_os = "windows") { "cmd" } else { "sh" };
+        let script = if cfg!(target_os = "windows") {
+            format!("timeout /t 2 /nobreak >nul && move /y \"{}\" \"{}\" && start \"\" \"{}\"", tmp_path, current_exe.display(), current_exe.display())
+        } else {
+            format!("sleep 1 && mv -f \"{}\" \"{}\" && exec \"{}\"", tmp_path, current_exe.display(), current_exe.display())
+        };
+
+        let _ = std::process::Command::new(shell)
+            .arg(if cfg!(target_os = "windows") { "/c" } else { "-c" })
+            .arg(&script)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+
+        std::process::exit(0);
+    });
+
+    Json(serde_json::json!({
+        "success": true,
+        "status": "update_downloaded",
+        "asset": asset_name,
+        "tag": format!("v{}", tag),
+    }))
 }
 
 pub async fn add_peer_handler(

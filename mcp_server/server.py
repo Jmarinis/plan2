@@ -51,6 +51,11 @@ async def serve() -> None:
                 inputSchema={"type": "object", "properties": {}},
             ),
             Tool(
+                name="update",
+                description="Trigger an update on the local node — downloads the latest binary from GitHub Releases and restarts",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+            Tool(
                 name="add_peer",
                 description="Connect to a new peer by address and port",
                 inputSchema={
@@ -96,8 +101,8 @@ async def serve() -> None:
                     "properties": {
                         "tool_name": {
                             "type": "string",
-                            "description": "Tool to execute on each node (e.g. get_status, refresh)",
-                            "enum": ["get_status", "refresh"],
+                            "description": "Tool to execute on each node (e.g. get_status, refresh, update)",
+                            "enum": ["get_status", "refresh", "update"],
                         },
                         "hop_count": {
                             "type": "integer",
@@ -119,6 +124,9 @@ async def serve() -> None:
             case "refresh":
                 import uuid
                 result = _req("POST", "/api/refresh", {"request_id": str(uuid.uuid4())})
+
+            case "update":
+                result = _req("GET", "/api/update")
 
             case "add_peer":
                 addr = arguments.get("address")
