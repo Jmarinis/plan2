@@ -420,8 +420,9 @@ pub async fn connect_to_unknown_peers(
                             }
                         }
                     }
-                    peers.entry(kp_id).or_insert_with(|| {
+                    peers.entry(kp_id.clone()).or_insert_with(|| {
                         let mut p = Peer::new(kp.address.clone(), kp.port);
+                        p.id = kp_id;
                         p.hostname = kp.hostname;
                         p.last_seen = Utc::now();
                         p
@@ -522,6 +523,7 @@ pub async fn notify_peer_handler(
 
     peers.entry(kp_id.clone()).or_insert_with(|| {
         let mut p = Peer::new(peer_info.address.clone(), peer_info.port);
+        p.id = kp_id;
         p.hostname = peer_info.hostname.clone();
         p.last_seen = Utc::now();
         info!(
@@ -1051,6 +1053,7 @@ pub async fn add_peer_handler(
                                 }
     peers.entry(kp_id.clone()).or_insert_with(|| {
                                     let mut p = Peer::new(kp.address.clone(), kp.port);
+                                    p.id = kp_id;
                                     p.hostname = kp.hostname;
                                     p.last_seen = Utc::now();
                                     p
