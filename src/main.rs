@@ -14,12 +14,26 @@ use crate::models::AppState;
 
 #[tokio::main]
 async fn main() {
+    let log_level = std::env::args()
+        .skip(1)
+        .find(|a| a.starts_with("--log-level="))
+        .and_then(|a| a.split('=').nth(1).map(|s| s.to_string()))
+        .unwrap_or_else(|| "info".to_string());
+
+    let level = match log_level.as_str() {
+        "error" => "error",
+        "warn" => "warn",
+        "info" | _ => "info",
+    };
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive("p2p_node=info".parse().unwrap()),
+                .add_directive(format!("p2p_node={}", level).parse().unwrap()),
         )
         .init();
+
+    info!("Log level: {}", level);
 
     let address = std::env::var("P2P_ADDRESS").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("P2P_PORT")

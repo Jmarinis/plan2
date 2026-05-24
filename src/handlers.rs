@@ -1337,7 +1337,7 @@ pub async fn connect_peer_handler(
                             let remote_node_id = handshake.node_id.clone().unwrap_or_default();
 
                             let mut peers = state.peers.write().await;
-                            let effective_id = if !remote_node_id.is_empty() && peers.contains_key(&remote_node_id) && remote_node_id != peer_id {
+                            let effective_id = if !remote_node_id.is_empty() {
                                 remote_node_id.clone()
                             } else {
                                 peer_id.clone()
