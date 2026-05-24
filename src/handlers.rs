@@ -46,12 +46,10 @@ pub async fn index_handler() -> Html<&'static str> {
         input { flex: 1; padding: 10px; border: 1px solid #0f3460; border-radius: 4px; background: #0f3460; color: #eee; }
         button { padding: 10px 20px; background: #00d9ff; color: #1a1a2e; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
         button:hover { background: #00b8d4; }
-        .refresh { position: fixed; top: 20px; right: 20px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <button class="refresh" onclick="refreshAll()">↻ Refresh</button>
         <h1>🌐 P2P Node Status</h1>
         
         <div class="card">
@@ -268,19 +266,6 @@ pub async fn index_handler() -> Html<&'static str> {
 
         initSortHeaders('connected-peers', connectedSortState);
         initSortHeaders('known-peers', knownSortState);
-
-        async function refreshAll() {
-            try {
-                await fetch('/api/refresh', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({request_id: crypto.randomUUID()})
-                });
-            } catch (e) {
-                console.error('Refresh failed:', e);
-            }
-            setTimeout(loadStatus, 1000);
-        }
 
         loadStatus();
         setInterval(loadStatus, 5000);
