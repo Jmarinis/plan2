@@ -1,4 +1,4 @@
-name: Rust CI
+name: Build and Release
 
 on:
   push:
@@ -9,21 +9,43 @@ on:
 jobs:
   build:
     strategy:
+      fail-fast: false
       matrix:
-        os: [ ubuntu-latest, macos-latest, windows-latest ]
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
+            label: linux-x86_64
+            deps: ""
+            linker: ""
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            label: linux-arm64
+            deps: sudo apt-get update -qq && sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+            deps: ""
+            linker: ""
           - os: macos-latest
             target: x86_64-apple-darwin
-            archive: tar.gz
+            label: macos-x86_64
+            deps: ""
+            linker: ""
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            archive: zip
+            label: windows-x86_64
+            deps: ""
+            linker: ""
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            label: windows-arm64
+            deps: ""
+            linker: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+<<<<<<< HEAD
 
       - name: Install Rust
         uses: rust-lang/setup-rust@v1
@@ -47,32 +69,76 @@ jobs:
         run: cargo clippy -- -D warnings
         continue-on-error: true
 
+=======
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cross-compilation dependencies
+        if: matrix.deps != ''
+        run: ${{ matrix.deps }}
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+>>>>>>> eaac9c710f48e683f02cd113019de9ded3d89602
       - name: Build
-        run: cargo build --verbose --all-targets --all-features
-
-      - name: Test
-        run: cargo test --verbose
-
-      - name: Build for target
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package
-        if: matrix.os != 'windows-latest'
-        run: |
-          mkdir -p dist
-          tar -czf dist/p2p-node-${{ matrix.os }}-${{ matrix.target }}.${{ matrix.archive }} \
-            -C target/${{ matrix.target }}/release p2p-node
         shell: bash
-
-      - name: Package Windows
-        if: matrix.os == 'windows-latest'
         run: |
-          mkdir dist
-          powershell Compress-Archive -Path target\x86_64-pc-windows-msvc\release\p2p-node.exe -DestinationPath dist\p2p-node-${{ matrix.os }}-${{ matrix.target }}.${{ matrix.archive }}
-        shell: pwsh
-
-      - name: Upload artifact
+          LINKER="${{ matrix.linker }}"
+          if [ -n "$LINKER" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$LINKER"
+          fi
+          export CARGO_INCREMENTAL=0
+          cargo build --release --target ${{ matrix.target }}
+      - name: Rename binary with platform label
+        shell: bash
+        run: |
+          EXT=""
+          case "${{ matrix.target }}" in
+            *windows*) EXT=".exe" ;;
+          esac
+          SRC="target/${{ matrix.target }}/release/p2p_node${EXT}"
+          DST="target/${{ matrix.target }}/release/p2p-node-${{ matrix.label }}"
+          if [ -f "$SRC" ]; then
+            cp "$SRC" "$DST"
+            echo "Renamed: $SRC -> $DST"
+          else
+            echo "Not found: $SRC"
+            exit 1
+          fi
+      - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: p2p-node-${{ matrix.os }}-${{ matrix.target }}
-          path: dist/*
+          name: p2p-node-${{ matrix.label }}
+          path: target/${{ matrix.target }}/release/p2p-node-${{ matrix.label }}
+
+  release:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get version
+        id: version
+        run: |
+          VERSION="v$(grep '^version ' Cargo.toml | sed 's/.*"\(.*\)"/\1/')"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+      - name: Prepare release artifacts
+        run: |
+          mkdir -p release_artifacts
+          for dir in p2p-node-*; do
+            if [ -d "$dir" ]; then
+              find "$dir" -type f -exec cp {} release_artifacts/ \;
+            fi
+          done
+          ls -la release_artifacts/
+      - name: Create or Update Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          body: |
+            Automated release for ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          overwrite_files: true
+          files: release_artifacts/*
