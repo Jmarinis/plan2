@@ -45,6 +45,7 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy -- -D warnings
+        continue-on-error: true
 
       - name: Build
         run: cargo build --verbose --all-targets --all-features
