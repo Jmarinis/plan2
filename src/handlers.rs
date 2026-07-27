@@ -302,6 +302,10 @@ pub async fn connect_to_unknown_peers(
             continue;
         }
 
+        if state.peers.read().await.get(&kp_id).map(|p| p.disconnect_intentional).unwrap_or(false) {
+            continue;
+        }
+
         // If another peer already claims this address:port with a different node_id,
         // remove it — the known_peers information is more recent.
         {
@@ -374,6 +378,7 @@ pub async fn connect_to_unknown_peers(
                             existing.address = kp.address.clone();
                             existing.port = kp.port;
                             existing.connected = true;
+                            existing.disconnect_intentional = false;
                             existing.hostname = new_peer_info.hostname.clone();
                             existing.session_id = handshake.session_id.clone();
                             existing.last_seen = Utc::now();
@@ -1004,17 +1009,18 @@ pub async fn add_peer_handler(
                         peers.contains_key(&remote_node_id)
                     };
 
-                    if already_known {
-                        let mut peers = state.peers.write().await;
-                        if let Some(existing) = peers.get_mut(&remote_node_id) {
-                            existing.address = payload.address.clone();
-                            existing.port = payload.port;
-                            existing.connected = true;
-                            existing.hostname = handshake.hostname.clone();
-                            existing.session_id = handshake.session_id.clone();
-                            existing.last_seen = Utc::now();
-                            existing.health_check_failures = 0;
-                            peer = existing.clone();
+                     if already_known {
+                         let mut peers = state.peers.write().await;
+                         if let Some(existing) = peers.get_mut(&remote_node_id) {
+                             existing.address = payload.address.clone();
+                             existing.port = payload.port;
+                             existing.connected = true;
+                             existing.disconnect_intentional = false;
+                             existing.hostname = handshake.hostname.clone();
+                             existing.session_id = handshake.session_id.clone();
+                             existing.last_seen = Utc::now();
+                             existing.health_check_failures = 0;
+                             peer = existing.clone();
                         }
                     } else {
                         peer.connected = true;
@@ -1251,6 +1257,7 @@ pub async fn disconnect_peer_handler(
             }
 
             peer.connected = false;
+            peer.disconnect_intentional = true;
 
             info!("Disconnected from peer {}:{}", peer.address, peer.port);
         }
@@ -1359,20 +1366,21 @@ pub async fn connect_peer_handler(
                                 node_id: Some(effective_id.clone()),
                             };
 
-                            if let Some(p) = peers.get_mut(&effective_id) {
-                                p.connected = true;
-                                p.session_id = handshake.session_id.clone();
-                                p.hostname = new_peer_info.hostname.clone();
-                                p.last_seen = Utc::now();
-                                p.health_check_failures = 0;
-                            } else {
-                                let mut p = Peer::new(peer_address.clone(), peer_port);
-                                p.id = effective_id.clone();
-                                p.connected = true;
-                                p.hostname = new_peer_info.hostname.clone();
-                                p.session_id = handshake.session_id.clone();
-                                peers.insert(effective_id.clone(), p);
-                            }
+                             if let Some(p) = peers.get_mut(&effective_id) {
+                                 p.connected = true;
+                                 p.disconnect_intentional = false;
+                                 p.session_id = handshake.session_id.clone();
+                                 p.hostname = new_peer_info.hostname.clone();
+                                 p.last_seen = Utc::now();
+                                 p.health_check_failures = 0;
+                             } else {
+                                 let mut p = Peer::new(peer_address.clone(), peer_port);
+                                 p.id = effective_id.clone();
+                                 p.connected = true;
+                                 p.hostname = new_peer_info.hostname.clone();
+                                 p.session_id = handshake.session_id.clone();
+                                 peers.insert(effective_id.clone(), p);
+                             }
 
                             if let Some(session_id) = handshake.session_id {
                                 let mut sessions = state.sessions.write().await;
@@ -1523,6 +1531,7 @@ pub async fn handshake_handler(
             existing_peer.port = payload.port;
             existing_peer.hostname = Some(payload.hostname.clone());
             existing_peer.connected = true;
+            existing_peer.disconnect_intentional = false;
             existing_peer.session_id = Some(session_id.clone());
             existing_peer.last_seen = Utc::now();
             existing_peer.health_check_failures = 0;

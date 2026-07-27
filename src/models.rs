@@ -40,6 +40,8 @@ pub struct Peer {
     pub session_id: Option<String>,
     #[serde(default)]
     pub health_check_failures: u32,
+    #[serde(default)]
+    pub disconnect_intentional: bool,
 }
 
 impl Peer {
@@ -53,6 +55,7 @@ impl Peer {
             last_seen: Utc::now(),
             session_id: None,
             health_check_failures: 0,
+            disconnect_intentional: false,
         }
     }
 }
