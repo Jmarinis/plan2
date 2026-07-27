@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
+use dns_lookup::lookup_addr;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{collections::HashMap, sync::Arc, time::{Duration, Instant}};
-use tokio::sync::RwLock;
+use std::{collections::HashMap, net::IpAddr, sync::Arc, time::{Duration, Instant}};
+use tokio::{spawn, sync::RwLock};
 use uuid::Uuid;
 
 pub type PeerId = String;
@@ -170,6 +171,25 @@ impl AppState {
                 .unwrap(),
         }
     }
+}
+
+pub fn spawn_hostname_resolution(state: AppState, peer_id: String, address: String) {
+    spawn(async move {
+        let result = tokio::task::spawn_blocking(move || {
+            address
+                .parse::<IpAddr>()
+                .ok()
+                .and_then(|ip| lookup_addr(&ip).ok())
+        })
+        .await;
+
+        if let Ok(Some(hostname)) = result {
+            let mut peers = state.peers.write().await;
+            if let Some(peer) = peers.get_mut(&peer_id) {
+                peer.hostname = Some(hostname);
+            }
+        }
+    });
 }
 
 #[derive(Debug, Serialize, Deserialize)]

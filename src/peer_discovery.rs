@@ -114,17 +114,18 @@ async fn health_check(state: &AppState) {
                             peers.insert(new_id.clone(), new_peer);
                             true
                         };
-                        if replaced {
-                            let all_ids: Vec<String> = peers.values().filter(|p| p.connected).map(|p| format!("{:.8}", p.id)).collect();
-                            info!(
-                                "Health check: replaced {} with {} at {}:{}, new connected: {:?}",
-                                &peer_id[..8.min(peer_id.len())],
-                                &new_id[..8.min(new_id.len())],
-                                addr, port,
-                                all_ids
-                            );
-                        }
-                        continue;
+                         if replaced {
+                             let all_ids: Vec<String> = peers.values().filter(|p| p.connected).map(|p| format!("{:.8}", p.id)).collect();
+                             info!(
+                                 "Health check: replaced {} with {} at {}:{}, new connected: {:?}",
+                                 &peer_id[..8.min(peer_id.len())],
+                                 &new_id[..8.min(new_id.len())],
+                                 addr, port,
+                                 all_ids
+                             );
+                         }
+                         crate::models::spawn_hostname_resolution(state.clone(), new_id.clone(), addr.clone());
+                         continue;
                     }
                 }
                 let mut peers = state.peers.write().await;
@@ -252,6 +253,7 @@ async fn reconnect_disconnected(state: &AppState) {
                             let mut sessions = state.sessions.write().await;
                             sessions.insert(session_id, Session::new(effective_id.clone()));
                         }
+                        crate::models::spawn_hostname_resolution(state.clone(), effective_id.clone(), addr.clone());
                         info!("Reconnected to peer {}:{}", addr, port);
 
                         if let Some(kp) = known_to_exchange {
